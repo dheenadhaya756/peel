@@ -205,27 +205,89 @@ const OPEN_TYPES = new Set(['string', 'any', 'object', 'unknown', 'String', 'Obj
 const VARIANT_SHAPED = /^(variant|size|tone|intent|color|colour|appearance|kind|status|severity)$/i
 
 /**
+ * Local string-union type aliases.
+ *
+ * `type AlertVariant = 'error' | 'info' | 'warning'` IS a closed variant set — it is
+ * just declared in the type system rather than in a cva map. Without resolving these
+ * a prop reads as the opaque `AlertVariant`, the axis is invisible, and a system
+ * that already closed its variants is reported as though it had not.
+ */
+function readUnionAliases(src: ts.SourceFile): Record<string, string[]> {
+  const out: Record<string, string[]> = {}
+  const visit = (node: ts.Node): void => {
+    if (ts.isTypeAliasDeclaration(node) && ts.isUnionTypeNode(node.type)) {
+      const values = node.type.types
+        .filter((t) => ts.isLiteralTypeNode(t) && ts.isStringLiteral(t.literal))
+        .map((t) => ((t as ts.LiteralTypeNode).literal as ts.StringLiteral).text)
+      // Only when EVERY member is a string literal; a union with `string` in it is
+      // still open and must not be reported as closed.
+      if (values.length && values.length === node.type.types.length) {
+        out[node.name.text] = values
+      }
+    }
+    ts.forEachChild(node, (n) => {
+      visit(n)
+    })
+  }
+  visit(src)
+  return out
+}
+
+/** The JSDoc text attached to a node, if any. Measured documentation, not a guess. */
+function jsDocOf(node: ts.Node): string | undefined {
+  const docs = (node as unknown as { jsDoc?: ts.JSDoc[] }).jsDoc
+  if (!docs?.length) return undefined
+  const text = docs
+    .map((d) => (typeof d.comment === 'string' ? d.comment : ts.getTextOfJSDocComment(d.comment) ?? ''))
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return text || undefined
+}
+
+/**
  * @param axes variant axis names recovered from the cva map. A prop whose name
  *   matches a real axis and is typed `string` is the expensive case: the value is
  *   constrained in the styling map but not in the type system, so an invented
  *   value like variant="cta" COMPILES and nothing catches it.
+ * @param aliases local string-union aliases, so `variant: AlertVariant` resolves.
  */
 function readProps(
   src: ts.SourceFile,
   text: string,
   axes: string[] = [],
-): { props: PropFact[]; open: string[] } {
+  aliases: Record<string, string[]> = {},
+): { props: PropFact[]; open: string[]; typeAxes: Record<string, string[]> } {
   const props: PropFact[] = []
   const open: string[] = []
+  const typeAxes: Record<string, string[]> = {}
   const axisSet = new Set(axes.map((a) => a.toLowerCase()))
 
   const capture = (members: ts.NodeArray<ts.TypeElement>) => {
     for (const m of members) {
       if (!ts.isPropertySignature(m) || !m.name) continue
       const name = m.name.getText(src).replace(/['"]/g, '')
-      const type = m.type ? m.type.getText(src).replace(/\s+/g, ' ').trim() : 'unknown'
-      const isOpen = OPEN_TYPES.has(type)
-      props.push({ name, type, required: !m.questionToken, open: isOpen })
+      const raw = m.type ? m.type.getText(src).replace(/\s+/g, ' ').trim() : 'unknown'
+
+      // Resolve an alias to the union it stands for, and treat it as an axis.
+      const aliased = aliases[raw]
+      const inline =
+        m.type && ts.isUnionTypeNode(m.type) &&
+        m.type.types.every((t) => ts.isLiteralTypeNode(t) && ts.isStringLiteral(t.literal))
+          ? m.type.types.map((t) => ((t as ts.LiteralTypeNode).literal as ts.StringLiteral).text)
+          : null
+      const values = aliased ?? inline
+      if (values?.length) typeAxes[name] = values
+
+      const type = values ? values.map((v) => `'${v}'`).join(' | ') : raw
+      const isOpen = OPEN_TYPES.has(raw)
+      props.push({
+        name,
+        type,
+        required: !m.questionToken,
+        open: isOpen,
+        description: jsDocOf(m),
+      })
       if (isOpen && (axisSet.has(name.toLowerCase()) || VARIANT_SHAPED.test(name))) {
         open.push(name)
       }
@@ -246,7 +308,7 @@ function readProps(
     })
   }
   visit(src)
-  return { props, open }
+  return { props, open, typeAxes }
 }
 
 /**
@@ -360,6 +422,72 @@ const STATE_WORDS = [
   'checked', 'pressed', 'invalid', 'readonly', 'expanded',
 ]
 
+/**
+ * Defaults written in the component's own destructured parameters.
+ *
+ * `const Alert = ({ variant = 'info', dismissible = false }) => …` declares real
+ * defaults that never reach a cva map or a .d.ts. Without reading them the
+ * generator has to adopt the first variant value and record an assumption, when the
+ * answer was sitting in the signature all along.
+ */
+function readParamDefaults(src: ts.SourceFile, name: string): Record<string, string> {
+  const out: Record<string, string> = {}
+
+  const fromParams = (params: ts.NodeArray<ts.ParameterDeclaration>) => {
+    for (const p of params) {
+      if (!ts.isObjectBindingPattern(p.name)) continue
+      for (const el of p.name.elements) {
+        if (!el.initializer) continue
+        const key = el.propertyName?.getText(src) ?? el.name.getText(src)
+        const literal = el.initializer.getText(src).replace(/^['"`]|['"`]$/g, '')
+        // Only plain literals are defaults worth recording; an expression is not.
+        if (/^[\w.-]+$/.test(literal)) out[key] = literal
+      }
+    }
+  }
+
+  const visit = (node: ts.Node): void => {
+    if (ts.isVariableStatement(node)) {
+      for (const d of node.declarationList.declarations) {
+        if (d.name.getText(src) !== name || !d.initializer) continue
+        if (ts.isArrowFunction(d.initializer) || ts.isFunctionExpression(d.initializer)) {
+          fromParams(d.initializer.parameters)
+        } else if (ts.isCallExpression(d.initializer)) {
+          // forwardRef(({ variant = 'info' }) => …)
+          for (const a of d.initializer.arguments) {
+            if (ts.isArrowFunction(a) || ts.isFunctionExpression(a)) fromParams(a.parameters)
+          }
+        }
+      }
+    } else if (ts.isFunctionDeclaration(node) && node.name?.text === name) {
+      fromParams(node.parameters)
+    }
+    ts.forEachChild(node, (n) => {
+      visit(n)
+    })
+  }
+  visit(src)
+  return out
+}
+
+/** The JSDoc on the component's own declaration — its purpose, in the team's words. */
+function componentDoc(src: ts.SourceFile, name: string): string | undefined {
+  let found: string | undefined
+  const visit = (node: ts.Node): void => {
+    if (found) return
+    if (ts.isVariableStatement(node)) {
+      for (const d of node.declarationList.declarations) {
+        if (d.name.getText(src) === name) found = jsDocOf(node) ?? jsDocOf(d)
+      }
+    } else if ((ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node)) && node.name?.text === name) {
+      found = jsDocOf(node)
+    }
+    ts.forEachChild(node, (n) => { visit(n) })
+  }
+  visit(src)
+  return found
+}
+
 /* ------------------------------------------------------------------- components */
 
 function extractComponents(root: string, files: string[], rootExports: Set<string>): ComponentFact[] {
@@ -393,7 +521,19 @@ function extractComponents(root: string, files: string[], rootExports: Set<strin
       [...rendering][0]
 
     const cva = readCva(src)
-    const { props, open } = readProps(src, text, Object.keys(cva.variants))
+    const aliases = readUnionAliases(src)
+    const { props, open, typeAxes } = readProps(src, text, Object.keys(cva.variants), aliases)
+
+    // A variant axis can come from a cva map OR from the type system. Both are
+    // closed sets; a system that used types rather than cva was previously invisible.
+    const variants = { ...typeAxes, ...cva.variants }
+
+    // The component's own JSDoc is the purpose, already written by the team.
+    const docComment = componentDoc(src, name)
+
+    // Defaults declared in the signature are real; prefer them over an assumption.
+    const paramDefaults = readParamDefaults(src, name)
+    const defaultVariants = { ...paramDefaults, ...cva.defaultVariants }
     const raw = findRawValues(file, text)
     const tokens = [...new Set((text.match(/var\(--[a-zA-Z0-9-]+\)/g) ?? []).map((t) => t.slice(6, -1)))]
     const states = STATE_WORDS.filter((w) => new RegExp(`\\b${w}\\b`, 'i').test(text))
@@ -409,14 +549,15 @@ function extractComponents(root: string, files: string[], rootExports: Set<strin
       file: path.relative(root, file).replace(/\\/g, '/'),
       exported: rootExports.size === 0 ? true : rootExports.has(name),
       props,
-      variants: cva.variants,
+      variants,
       variantClasses: cva.variantClasses,
-      defaultVariants: cva.defaultVariants,
+      defaultVariants,
       openVariants: open,
       rawValues: raw,
       tokensUsed: tokens,
       states,
       hasDoc,
+      docComment,
       loc: text.split('\n').length,
     })
   }

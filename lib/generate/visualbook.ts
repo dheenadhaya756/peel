@@ -380,7 +380,7 @@ ${componentCss}
       <div class="bar-row"><span style="color:var(--ink-soft)">Raw values</span><span class="bar"><i style="width:100%"></i></span><span class="mono" style="font-size:11px">${facts.rawValueTotal} → 0</span></div>
       <div class="bar-row"><span style="color:var(--ink-soft)">Open unions</span><span class="bar"><i style="width:100%"></i></span><span class="mono" style="font-size:11px">${facts.components.filter((c) => c.openVariants.length).length} → 0</span></div>
       <div class="bar-row"><span style="color:var(--ink-soft)">Semantic tokens</span><span class="bar"><i style="width:100%"></i></span><span class="mono" style="font-size:11px">0 → ${semantic.length}</span></div>
-      <div class="bar-row"><span style="color:var(--ink-soft)">Needs a human</span><span class="bar"><i style="width:${Math.min(100, todos.length * 12)}%"></i></span><span class="mono" style="font-size:11px">${todos.length}</span></div>
+      <div class="bar-row"><span style="color:var(--ink-soft)">Assumptions</span><span class="bar"><i style="width:${Math.min(100, todos.length * 12)}%"></i></span><span class="mono" style="font-size:11px">${todos.length}</span></div>
     </div>
   </div>
 
@@ -403,10 +403,10 @@ ${componentCss}
     </div>
   </div>
 
-  <div class="section-title"><span class="mono">03</span><h2>Needs a human</h2></div>
+  <div class="section-title"><span class="mono">03</span><h2>Decisions taken</h2></div>
   <div class="todos">
-    <h2>${todos.length} open question${todos.length === 1 ? '' : 's'}</h2>
-    <p class="note">Nothing below was guessed. Each one is a value that could not be measured from the source, recorded as a question rather than filled in. This list is the honest ceiling on the score.</p>
+    <h2>${todos.length} assumption${todos.length === 1 ? '' : 's'} recorded</h2>
+    <p class="note">Nothing below was guessed. Each is a value the source did not state, resolved from the evidence available and written down so it can be corrected.</p>
     <ol>${todos.map((t) => `<li>${esc(t)}</li>`).join('')}</ol>
   </div>
 

@@ -13,6 +13,7 @@ import type { SystemFacts, Scorecard } from '../engine/types'
 import { deriveTokens, tokensToCss, type GeneratedToken } from './tokens'
 import { generateComponent, type GeneratedComponent } from './component'
 import { archetypeFor } from './knowledge'
+import { enrichAll } from './enrich'
 import {
   buildCi, buildConformanceChecker, buildDocsCheck, buildEslintConfig, buildStories,
 } from './enforcement'
@@ -35,12 +36,12 @@ export interface ConversionResult {
 /** Called per phase so the caller can stream what is happening. */
 export type OnPhase = (id: string, label: string, detail?: string) => void
 
-export function convert(
+export async function convert(
   facts: SystemFacts,
   before: Scorecard,
   selected: string[],
   onPhase: OnPhase = () => {},
-): ConversionResult {
+): Promise<ConversionResult> {
   const files: Record<string, string> = {}
 
   const tokens = deriveTokens(facts)
@@ -53,8 +54,20 @@ export function convert(
 
   const picked = facts.components.filter((c) => selected.includes(c.name))
 
+  // Judgment first, so each component is generated WITH it rather than patched after.
+  // Measured JSDoc wins, then recorded archetypes, then the model for what is left.
+  const judgments = await enrichAll(picked, facts.packageName)
+  const generatedCount = [...judgments.values()].filter((j) => j.generated.length).length
+  onPhase(
+    'judgment',
+    'Fill the judgment fields',
+    generatedCount
+      ? `${picked.length - generatedCount} answered from source or archetype · ${generatedCount} filled by the model`
+      : `all ${picked.length} answered from source documentation or recorded archetypes`,
+  )
+
   const components = picked.map((f) => {
-    const g = generateComponent(f, tokens)
+    const g = generateComponent(f, tokens, judgments.get(f.name))
     const axes = Object.keys(g.guidance.variants)
     onPhase(
       `component:${g.kebab}`,

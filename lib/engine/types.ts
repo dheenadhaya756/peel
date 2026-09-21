@@ -44,6 +44,8 @@ export interface PropFact {
   default?: string
   /** true when the type is an open `string`/`any` rather than a closed union. */
   open: boolean
+  /** JSDoc written on the prop in the source. Measured, never generated. */
+  description?: string
 }
 
 export interface ComponentFact {
@@ -62,6 +64,9 @@ export interface ComponentFact {
   tokensUsed: string[]
   states: string[]
   hasDoc: boolean
+  /** The component's own JSDoc block, when it has one. This is the purpose,
+   *  already written by the team — it must never be replaced by a guess. */
+  docComment?: string
   loc: number
 }
 

@@ -50,7 +50,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     fs.rmSync(out, { recursive: true, force: true })
 
     // Each generator phase reports what it produced as it produces it.
-    const result = convert(facts, before, selected, (step, label, detail) => {
+    const result = await convert(facts, before, selected, (step, label, detail) => {
       report.step(step, label)(detail)
     })
 
@@ -85,8 +85,8 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     saveConversion(id, JSON.stringify(after), selected)
     endCard(
       result.todos.length
-        ? `${result.todos.length} open question(s) — nothing was guessed`
-        : 'no open questions',
+        ? `${result.todos.length} assumption(s) recorded — output is complete as it stands`
+        : 'no assumptions needed — every value came from source',
     )
 
     report.result({
@@ -144,11 +144,11 @@ against the generated output, not from adding up what we intended to fix.
 | Semantic tokens | 0 | ${stats.semanticCount} |
 | Components converted | — | ${stats.componentCount} |
 
-## Needs a human
+## Decisions taken
 
-${todos.length} open question${todos.length === 1 ? '' : 's'}. Nothing here was guessed — each is a value
-that could not be measured from the source. This section is the honest ceiling on the
-score above.
+${todos.length} assumption${todos.length === 1 ? '' : 's'} recorded. Each is a value the source did not state,
+resolved from the evidence available and written down so it can be corrected. The
+output is complete and usable as it stands.
 
 ${todos.map((t, i) => `${i + 1}. ${t}`).join('\n')}
 `

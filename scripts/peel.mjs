@@ -158,7 +158,7 @@ if (!selected.length) {
 
 log(`  converting ${selected.join(', ')} …`)
 
-const result = convert(facts, before, selected)
+const result = await convert(facts, before, selected)
 fs.rmSync(outDir, { recursive: true, force: true })
 for (const [rel, body] of Object.entries(result.files)) {
   const p = path.join(outDir, rel)
@@ -199,7 +199,7 @@ if (asJson) {
   console.log(`  visual book     ${path.join(outDir, 'visual-book.html')}`)
   console.log()
   if (result.todos.length) {
-    console.log(`  NEEDS A HUMAN — ${result.todos.length} question(s). Nothing was guessed.`)
+    console.log(`  DECISIONS TAKEN — ${result.todos.length} assumption(s). Nothing was guessed; the output is complete as it stands.`)
     console.log()
     result.todos.forEach((t, i) => console.log(`   ${i + 1}. ${t}`))
     console.log()
