@@ -7,6 +7,7 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
+import { execFileSync } from 'node:child_process'
 import { unzipSync } from 'fflate'
 
 const MAX_FILES = 25_000
@@ -74,29 +75,59 @@ function materialise(entries: Record<string, Uint8Array>, dest: string) {
   return count
 }
 
+/**
+ * A token, if one is configured. Private repositories are the normal case for a
+ * client design system, and an unauthenticated download of one returns 404 — which
+ * is indistinguishable from "no such repo", so the error has to say both.
+ */
+function githubToken(): string | null {
+  if (process.env.GITHUB_TOKEN) return process.env.GITHUB_TOKEN
+  try {
+    // `gh auth token` is the only reliable way to get it: on Windows gh stores the
+    // token in the Credential Manager rather than in hosts.yml, so reading the file
+    // finds a username and no token.
+    return execFileSync('gh', ['auth', 'token'], { encoding: 'utf8', timeout: 5000 }).trim() || null
+  } catch {
+    return null
+  }
+}
+
 export async function ingestGithub(url: string, dest: string) {
   const parsed = parseRepo(url)
   if (!parsed) throw new Error('That does not look like a GitHub repository URL.')
   const { owner, repo, ref } = parsed
 
-  const attempts = ref ? [ref] : ['HEAD']
-  let lastError = ''
-  for (const r of attempts) {
-    const api = `https://codeload.github.com/${owner}/${repo}/zip/${r === 'HEAD' ? 'refs/heads/main' : `refs/heads/${r}`}`
-    const fallback = `https://codeload.github.com/${owner}/${repo}/zip/refs/heads/master`
-    for (const target of [api, fallback]) {
-      const res = await fetch(target, { headers: { 'User-Agent': 'peel' } })
-      if (!res.ok) {
-        lastError = `${res.status} ${res.statusText}`
-        continue
-      }
-      const buf = new Uint8Array(await res.arrayBuffer())
-      const files = materialise(stripRoot(unzipSync(buf)), dest)
-      return { files, name: repo, ref: r }
-    }
+  const token = githubToken()
+  const headers: Record<string, string> = { 'User-Agent': 'peel' }
+  if (token) headers.authorization = `Bearer ${token}`
+
+  // Ask the API for the real default branch rather than guessing main/master.
+  let branches = ref ? [ref] : []
+  if (!branches.length) {
+    try {
+      const meta = await fetch(`https://api.github.com/repos/${owner}/${repo}`, { headers })
+      if (meta.ok) branches.push(((await meta.json()) as { default_branch: string }).default_branch)
+    } catch { /* fall through to the guesses below */ }
   }
+  branches.push('main', 'master')
+
+  let lastError = ''
+  for (const b of [...new Set(branches)]) {
+    const target = `https://codeload.github.com/${owner}/${repo}/zip/refs/heads/${b}`
+    const res = await fetch(target, { headers })
+    if (!res.ok) {
+      lastError = `${res.status} ${res.statusText}`
+      continue
+    }
+    const buf = new Uint8Array(await res.arrayBuffer())
+    const files = materialise(stripRoot(unzipSync(buf)), dest)
+    return { files, name: repo, ref: b }
+  }
+
   throw new Error(
-    `Could not download ${owner}/${repo} (${lastError}). Public repositories only — for a private repo, upload a zip instead.`,
+    token
+      ? `Could not download ${owner}/${repo} (${lastError}). The repository may not exist, or the configured token may not have access to it.`
+      : `Could not download ${owner}/${repo} (${lastError}). If it is private, no token is configured — run \`gh auth login\`, or set GITHUB_TOKEN in .env.local, or upload a zip instead.`,
   )
 }
 
