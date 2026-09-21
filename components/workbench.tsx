@@ -403,7 +403,7 @@ function Welcome({ onSample, busy }: { onSample: () => void; busy: boolean }) {
           <div className="absolute inset-0 texture-dots opacity-20" />
           <div className="absolute inset-0 flex items-center justify-center">
             <div className="pill-glass px-5 py-3 text-left">
-              <div className="text-[11px] font-mono uppercase tracking-[.14em] text-ink-soft">Verdict</div>
+              <div className="text-[12px] font-medium text-ink-soft">Verdict</div>
               <div className="text-[15px] font-semibold text-ink">Not agentic → Agentic</div>
             </div>
           </div>
@@ -516,7 +516,7 @@ function Chat({ systemId, systemName }: { systemId: string | null; systemName: s
     <aside className="w-[330px] shrink-0 flex flex-col bg-paper-raised">
       <div className="px-4 h-[52px] shrink-0 flex items-center justify-between border-b border-paper-edge">
         <span className="text-[13.5px] font-medium">Ask</span>
-        <span className="mono-label truncate max-w-[150px]">{systemName ?? 'no system'}</span>
+        <span className="text-[12px] text-ink-faint truncate max-w-[160px]">{systemName ?? 'no system'}</span>
       </div>
 
       <div className="flex-1 overflow-y-auto no-scrollbar p-4 space-y-3">

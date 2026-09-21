@@ -41,7 +41,7 @@ function countComponents(dir: string, depth = 0): number {
     const full = path.join(dir, e.name)
     if (e.isDirectory()) {
       if (e.name === 'node_modules' || e.name.startsWith('.')) continue
-      if (NON_LIBRARY.test(full)) continue
+      if (NON_LIBRARY.test(path.relative(dir, full))) continue
       n += countComponents(full, depth + 1)
     } else if (/\.(tsx|jsx)$/.test(e.name) && !/\.(test|spec|stories)\./.test(e.name)) {
       n++

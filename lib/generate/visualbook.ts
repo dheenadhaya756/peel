@@ -68,7 +68,7 @@ function compileSourceUtilities(facts: SystemFacts): string {
 
 /** The markup the source component would produce for one variant. */
 function beforeMarkup(fact: ComponentFact, axis: string, value: string): string {
-  const branchClasses = fact.variantClasses?.[axis]?.[value] ?? ''
+  const branchClasses = axis === 'base' ? '' : (fact.variantClasses?.[axis]?.[value] ?? '')
   // The cva base class is the first argument; recover it from the component name.
   const baseClass = `aui-${fact.name.toLowerCase()}`
   const el = /input/i.test(fact.name) ? 'input' : /button/i.test(fact.name) ? 'button' : 'div'
@@ -87,7 +87,9 @@ function afterMarkup(c: GeneratedComponent, axis: string, value: string): string
   const others = Object.keys(c.guidance.variants)
     .filter((a) => a !== axis)
     .map((a) => `${base}--${c.guidance.defaultVariants[a]}`)
-  const cls = [base, `${base}--${value}`, ...others].join(' ')
+  const cls = axis === 'base'
+    ? [base, ...Object.keys(c.guidance.variants).map((a) => `${base}--${c.guidance.defaultVariants[a]}`)].join(' ')
+    : [base, `${base}--${value}`, ...others].join(' ')
   const label = `${c.name} ${value}`
   if (el === 'input') return `<input class="${cls}" placeholder="${esc(label)}" />`
   if (el === 'button') return `<button class="${cls}">${esc(label)}</button>`
@@ -136,7 +138,12 @@ export function buildVisualBook(input: VisualBookInput): string {
       const fact = facts.components.find((f) => f.name === c.name)!
       const axes = Object.entries(c.guidance.variants)
 
-      const rows = axes
+      // A component with no variant axes still has to be shown. Rendering rows only
+      // per axis means anything without a cva map — which is most of a real design
+      // system — produces an empty panel and no before/after at all.
+      const shownAxes: Array<[string, string[]]> = axes.length ? axes : [['base', ['default']]]
+
+      const rows = shownAxes
         .map(
           ([axis, values]) => `
       <div class="axis">
@@ -155,12 +162,13 @@ export function buildVisualBook(input: VisualBookInput): string {
         )
         .join('')
 
-      const beforeProps = fact.props
-        .map((p) => `${p.name}${p.required ? '' : '?'}: ${p.type}`)
-        .join('\n')
-      const afterProps = c.guidance.props
-        .map((p) => `${p.name}${p.required ? '' : '?'}: ${p.type}`)
-        .join('\n')
+      // An empty box reads as a rendering bug. Say what was actually found instead.
+      const beforeProps =
+        fact.props.map((p) => `${p.name}${p.required ? '' : '?'}: ${p.type}`).join('\n') ||
+        '// no named Props interface — an agent has nothing to read'
+      const afterProps =
+        c.guidance.props.map((p) => `${p.name}${p.required ? '' : '?'}: ${p.type}`).join('\n') ||
+        '// no props recovered from the source'
 
       return `
   <section class="component" id="${esc(c.kebab)}">
@@ -228,8 +236,7 @@ body{margin:0;background:var(--paper);color:var(--ink);
   color:#fff;padding:72px 32px 88px;text-align:center;margin-bottom:-48px}
 .hero h1{margin:0 0 8px;font-size:44px;letter-spacing:-.032em;font-weight:600}
 .hero .sub{opacity:.92;font-size:16px;margin:0 0 28px}
-.hero .eyebrow{font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:.16em;
-  text-transform:uppercase;opacity:.85;margin-bottom:14px}
+.hero .eyebrow{font-size:12.5px;font-weight:500;opacity:.85;margin-bottom:14px}
 
 /* score header */
 .scoreboard{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;
@@ -252,7 +259,7 @@ body{margin:0;background:var(--paper);color:var(--ink);
 h2{font-size:30px;letter-spacing:-.03em;margin:0 0 6px;font-weight:600}
 h3{font-size:14px;letter-spacing:.01em;margin:24px 0 8px;font-weight:600}
 .section-title{margin:64px 0 20px;display:flex;align-items:baseline;gap:12px}
-.section-title .mono{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-faint)}
+.section-title .mono{font-family:inherit;font-size:12px;font-weight:500;color:var(--ink-faint)}
 .section-title h2{margin:0}
 
 .component{background:var(--paper-raised);border:1px solid var(--edge);border-radius:24px;
@@ -266,7 +273,7 @@ h3{font-size:14px;letter-spacing:.01em;margin:24px 0 8px;font-weight:600}
 
 .axis{margin-bottom:26px}
 .axis-head{display:flex;align-items:baseline;gap:10px;margin-bottom:10px}
-.axis-head .mono{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-faint)}
+.axis-head .mono{font-family:inherit;font-size:12px;font-weight:500;color:var(--ink-faint)}
 .axis-values{font-size:12px;color:var(--ink-faint)}
 .split{display:grid;grid-template-columns:1fr 1fr;gap:16px}
 .side{border:1px solid var(--edge);border-radius:18px;overflow:hidden;background:var(--paper)}
@@ -274,7 +281,7 @@ h3{font-size:14px;letter-spacing:.01em;margin:24px 0 8px;font-weight:600}
 .side-after{background:var(--paper-raised)}
 .side-label{display:flex;justify-content:space-between;align-items:center;
   padding:9px 14px;border-bottom:1px solid var(--edge);
-  font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase}
+  font-size:12px;font-weight:600}
 .side-before .side-label{color:var(--bad)}
 .side-after .side-label{color:var(--good)}
 .side-label span{font-family:"JetBrains Mono",monospace;font-weight:400;
@@ -291,8 +298,8 @@ h3{font-size:14px;letter-spacing:.01em;margin:24px 0 8px;font-weight:600}
 .guidance{margin-top:26px;border-top:1px solid var(--edge);padding-top:20px}
 .note{color:var(--ink-faint);font-size:12.5px;margin:0 0 12px;max-width:72ch}
 table{border-collapse:collapse;width:100%;font-size:13px}
-th{text-align:left;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;
-  color:var(--ink-faint);font-weight:500;padding:0 0 8px;border-bottom:1px solid var(--edge)}
+th{text-align:left;font-size:11.5px;color:var(--ink-faint);font-weight:500;
+  padding:0 0 8px;border-bottom:1px solid var(--edge)}
 td{padding:9px 0;border-bottom:1px solid var(--paper-sunken);vertical-align:top}
 td:last-child{width:42%}
 td code{font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--flame-deep);
@@ -343,7 +350,7 @@ ${componentCss}
 
   <div class="scoreboard">
     <div>
-      <div class="mono" style="font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:10px">Agent readiness</div>
+      <div class="mono" style="font-size:11.5px;font-weight:500;color:var(--ink-faint);margin-bottom:10px">Agent readiness</div>
       <div class="score-big">
         <span class="n">${before.composite}</span>
         <span class="arrow">→</span>
@@ -356,7 +363,7 @@ ${componentCss}
       <p style="font-size:12.5px;color:var(--ink-soft);margin:14px 0 0;max-width:34ch">${esc(after.verdict.meaning)}</p>
     </div>
     <div class="axis-bars">
-      <div class="mono" style="font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-faint)">By axis</div>
+      <div class="mono" style="font-size:11.5px;font-weight:500;color:var(--ink-faint)">By axis</div>
       ${before.axes
         .map((a, i) => {
           const b = after.axes[i]
@@ -369,7 +376,7 @@ ${componentCss}
         .join('')}
     </div>
     <div class="axis-bars">
-      <div class="mono" style="font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-faint)">Measured</div>
+      <div class="mono" style="font-size:11.5px;font-weight:500;color:var(--ink-faint)">Measured</div>
       <div class="bar-row"><span style="color:var(--ink-soft)">Raw values</span><span class="bar"><i style="width:100%"></i></span><span class="mono" style="font-size:11px">${facts.rawValueTotal} → 0</span></div>
       <div class="bar-row"><span style="color:var(--ink-soft)">Open unions</span><span class="bar"><i style="width:100%"></i></span><span class="mono" style="font-size:11px">${facts.components.filter((c) => c.openVariants.length).length} → 0</span></div>
       <div class="bar-row"><span style="color:var(--ink-soft)">Semantic tokens</span><span class="bar"><i style="width:100%"></i></span><span class="mono" style="font-size:11px">0 → ${semantic.length}</span></div>

@@ -77,8 +77,10 @@
            text-[11px] font-medium tracking-tight ring-1;
   }
 
+  /* Section labels read in the normal face, sentence case. Monospace is reserved
+     for things that really are code — evidence lines, token names, file paths. */
   .mono-label {
-    @apply font-mono text-[10.5px] uppercase tracking-[.14em] text-ink-faint;
+    @apply text-[11.5px] font-medium tracking-tight text-ink-faint;
   }
 
   /* Evidence line — file:line proof beside every finding */

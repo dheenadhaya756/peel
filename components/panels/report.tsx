@@ -44,7 +44,7 @@ export function ReportPanel({
           <div className="absolute inset-0 texture-dots opacity-[.18]" aria-hidden />
           <div className="relative flex flex-wrap items-start justify-between gap-6">
             <div>
-              <div className="font-mono text-[10.5px] uppercase tracking-[.16em] opacity-80 mb-2">
+              <div className="text-[12.5px] font-medium opacity-80 mb-2">
                 Agent readiness
               </div>
               <div className="flex items-baseline gap-3">

@@ -101,7 +101,7 @@ export function CodePanel({ system }: { system: SystemDetail }) {
         </div>
         {groups.map(([dir, items]) => (
           <div key={dir} className="py-1.5">
-            <div className="px-4 py-1 font-mono text-[10px] uppercase tracking-[.12em] text-ink-faint">
+            <div className="px-4 py-1 text-[11px] font-medium text-ink-faint">
               {dir}
             </div>
             {items.map((f) => (

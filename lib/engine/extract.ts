@@ -42,6 +42,28 @@ const read = (f: string) => {
 
 const lineOf = (text: string, pos: number) => text.slice(0, pos).split('\n').length
 
+/**
+ * Parse with the right ScriptKind.
+ *
+ * Without ScriptKind.TSX a .tsx file's `<div>` is read as a type assertion rather
+ * than JSX, so the tree contains no JsxElement nodes at all — and any detection that
+ * looks for rendering silently finds nothing while appearing to work.
+ */
+const parse = (file: string, text: string): ts.SourceFile =>
+  ts.createSourceFile(
+    file,
+    text,
+    ts.ScriptTarget.Latest,
+    true,
+    /\.tsx$/.test(file)
+      ? ts.ScriptKind.TSX
+      : /\.(jsx|js|mjs|cjs)$/.test(file)
+        ? ts.ScriptKind.JSX
+        : /\.ts$/.test(file)
+          ? ts.ScriptKind.TS
+          : ts.ScriptKind.JS,
+  )
+
 /* ------------------------------------------------------------------ raw values */
 
 /**
@@ -58,7 +80,7 @@ const PX = /(?<![\w-])(\d{1,4})px\b/g
 const RGB = /\brgba?\(\s*\d+\s*,/g
 
 export function findRawValues(file: string, text: string): Evidence[] {
-  const src = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true)
+  const src = parse(file, text)
   const hits: Evidence[] = []
   const seen = new Set<string>()
 
@@ -227,21 +249,31 @@ function readProps(
   return { props, open }
 }
 
+/**
+ * Exported VALUE names only.
+ *
+ * Type exports must be excluded or a props interface becomes a component: a barrel
+ * writing `export { MenuDropdown, type MenuDropdownProps }` otherwise yields
+ * `MenuDropdownProps` as a candidate, and it wins whenever it sorts first.
+ */
 function readExportedNames(src: ts.SourceFile): Set<string> {
   const names = new Set<string>()
   const visit = (node: ts.Node): void => {
     if (ts.isExportDeclaration(node) && node.exportClause && ts.isNamedExports(node.exportClause)) {
-      for (const el of node.exportClause.elements) names.add(el.name.text)
+      // `export type { X }` marks the whole clause; `export { type X }` marks the element.
+      if (!node.isTypeOnly) {
+        for (const el of node.exportClause.elements) {
+          if (!el.isTypeOnly) names.add(el.name.text)
+        }
+      }
     }
     const mods = ts.canHaveModifiers(node) ? ts.getModifiers(node) : undefined
     const isExported = mods?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword)
     if (isExported) {
+      // Interfaces and type aliases are deliberately not collected — they are types.
       if (ts.isVariableStatement(node)) {
         for (const d of node.declarationList.declarations) names.add(d.name.getText(src))
-      } else if (
-        (ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node)) &&
-        node.name
-      ) {
+      } else if ((ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node)) && node.name) {
         names.add(node.name.text)
       }
     }
@@ -251,6 +283,76 @@ function readExportedNames(src: ts.SourceFile): Set<string> {
   }
   visit(src)
   return names
+}
+
+/** Names that are never components, however they are exported. */
+const NOT_A_COMPONENT =
+  /(Props|Options?|Config|Context|Type|Types|Ref|Handle|State|Args|Params|Schema|Variants|Styles|Theme|Constants|Utils|Helpers|Map|Enum|Kind)$/
+
+/**
+ * Does this declaration actually render? A name being PascalCase and exported is not
+ * enough — `export const Sizes = {...}` and `export const ButtonVariants = cva(...)`
+ * both pass that test and neither is a component.
+ */
+function findComponentNames(src: ts.SourceFile): Set<string> {
+  const found = new Set<string>()
+
+  const hasJsx = (node: ts.Node): boolean => {
+    let seen = false
+    const walk = (n: ts.Node) => {
+      if (seen) return
+      if (
+        ts.isJsxElement(n) || ts.isJsxSelfClosingElement(n) ||
+        ts.isJsxFragment(n) || ts.isJsxText(n)
+      ) { seen = true; return }
+      ts.forEachChild(n, (c) => { walk(c) })
+    }
+    walk(node)
+    return seen
+  }
+
+  /** forwardRef(...), memo(...), styled.div`…`, styled(X)`…` */
+  const isComponentFactory = (node: ts.Node): boolean => {
+    if (ts.isCallExpression(node)) {
+      const callee = node.expression.getText(src)
+      if (/(^|\.)(forwardRef|memo|styled)$/.test(callee)) return true
+      // React.forwardRef(function Inner(){ ... }) — check the wrapped function too.
+      return node.arguments.some((a) => hasJsx(a) || isComponentFactory(a))
+    }
+    if (ts.isTaggedTemplateExpression(node)) {
+      return /(^|\.)styled/.test(node.tag.getText(src))
+    }
+    return false
+  }
+
+  const consider = (name: string, init: ts.Node | undefined) => {
+    if (!/^[A-Z][A-Za-z0-9]*$/.test(name)) return
+    if (NOT_A_COMPONENT.test(name)) return
+    if (!init) return
+    if (hasJsx(init) || isComponentFactory(init)) found.add(name)
+  }
+
+  const visit = (node: ts.Node): void => {
+    if (ts.isVariableStatement(node)) {
+      for (const d of node.declarationList.declarations) {
+        consider(d.name.getText(src), d.initializer)
+      }
+    } else if (ts.isFunctionDeclaration(node) && node.name) {
+      consider(node.name.text, node.body)
+    } else if (ts.isClassDeclaration(node) && node.name) {
+      const heritage = node.heritageClauses?.map((h) => h.getText(src)).join(' ') ?? ''
+      if (/React\.Component|React\.PureComponent|\bComponent\b|\bPureComponent\b/.test(heritage)) {
+        if (/^[A-Z]/.test(node.name.text) && !NOT_A_COMPONENT.test(node.name.text)) {
+          found.add(node.name.text)
+        }
+      }
+    }
+    ts.forEachChild(node, (n) => {
+      visit(n)
+    })
+  }
+  visit(src)
+  return found
 }
 
 const STATE_WORDS = [
@@ -264,21 +366,31 @@ function extractComponents(root: string, files: string[], rootExports: Set<strin
   const out: ComponentFact[] = []
 
   for (const file of files) {
-    if (!/\.(tsx|jsx)$/.test(file)) continue
-    if (/\.(test|spec|stories)\./.test(file)) continue
+    // .js is included deliberately: a large share of React design systems ship JSX
+    // in plain .js files, and skipping them reports "0 components" on a system that
+    // plainly has them. Files without JSX are filtered out by findComponentNames.
+    if (!/\.(tsx|jsx|js|mjs)$/.test(file)) continue
+    if (/\.(test|spec|stories|config|setup)\./.test(file)) continue
     // Demos, docs and registries are not the library, and counting them turns
     // every `AccordionDemo` into a component.
-    if (NON_LIBRARY.test(file)) continue
+    if (NON_LIBRARY.test(path.relative(root, file))) continue
     const text = read(file)
     if (!text) continue
 
-    const src = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true)
+    const src = parse(file, text)
+    const base = path.basename(file).replace(/\.(tsx|jsx|js|mjs)$/, '')
+
+    // A component has to actually render. Being PascalCase and exported is not
+    // enough — that test passes for props interfaces and cva variant maps alike.
+    const rendering = findComponentNames(src)
+    if (!rendering.size) continue
+
+    // Prefer the one named after the file, then an exported one, then any.
     const exported = readExportedNames(src)
-    const base = path.basename(file).replace(/\.(tsx|jsx)$/, '')
-    // A component is a PascalCase export; fall back to the filename for default exports.
-    const candidates = [...exported].filter((n) => /^[A-Z][A-Za-z0-9]*$/.test(n))
-    const name = candidates.find((c) => c === base) ?? candidates[0] ?? (/^[A-Z]/.test(base) ? base : null)
-    if (!name) continue
+    const name =
+      (rendering.has(base) ? base : null) ??
+      [...rendering].find((n) => exported.has(n)) ??
+      [...rendering][0]
 
     const cva = readCva(src)
     const { props, open } = readProps(src, text, Object.keys(cva.variants))
@@ -426,13 +538,13 @@ export function extract(inputRoot: string): SystemFacts {
   let rootExports = new Set<string>()
   if (entryDts) {
     const t = read(entryDts)
-    if (t) rootExports = readExportedNames(ts.createSourceFile(entryDts, t, ts.ScriptTarget.Latest, true))
+    if (t) rootExports = readExportedNames(parse(entryDts, t))
   }
   if (rootExports.size === 0) {
     const entryTs = files.find((f) => /src[\\/]index\.tsx?$/.test(f))
     const t = entryTs ? read(entryTs) : null
     if (t && entryTs) {
-      rootExports = readExportedNames(ts.createSourceFile(entryTs, t, ts.ScriptTarget.Latest, true))
+      rootExports = readExportedNames(parse(entryTs, t))
     }
   }
 
