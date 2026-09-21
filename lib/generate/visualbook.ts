@@ -19,6 +19,96 @@ import type { GeneratedToken } from './tokens'
 const esc = (s: string) =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
+/**
+ * Confine the source stylesheet to the before-specimens.
+ *
+ * Inlining a design system's CSS verbatim hands it the whole document: a `body`
+ * rule repaints the book, a `position: fixed` overlay floats above it, and the
+ * report becomes unreadable. The CSS still has to be REAL — that is the entire point
+ * of the before side — so it is scoped rather than edited.
+ *
+ * `:root` is the exception. Its custom properties must stay global or nothing
+ * resolves, so those declarations are kept and everything else in the block dropped.
+ */
+function scopeCss(css: string, scope: string): string {
+  const out: string[] = []
+  let i = 0
+
+  /** Read one balanced {...} block starting at the opening brace. */
+  const readBlock = (start: number): { body: string; end: number } => {
+    let depth = 0
+    for (let j = start; j < css.length; j++) {
+      if (css[j] === '{') depth++
+      else if (css[j] === '}') {
+        depth--
+        if (depth === 0) return { body: css.slice(start + 1, j), end: j + 1 }
+      }
+    }
+    return { body: css.slice(start + 1), end: css.length }
+  }
+
+  const GLOBAL = /^(:root|html|body|\*|:host)$/i
+
+  while (i < css.length) {
+    const brace = css.indexOf('{', i)
+    if (brace < 0) break
+
+    const prelude = css.slice(i, brace).trim()
+    const { body, end } = readBlock(brace)
+    i = end
+
+    if (!prelude) continue
+
+    // Nested at-rules keep their wrapper and have their contents scoped.
+    if (/^@(media|supports|layer|container)/i.test(prelude)) {
+      out.push(`${prelude} {\n${scopeCss(body, scope)}\n}`)
+      continue
+    }
+    // Keyframes and font-face carry no selectors to scope.
+    if (/^@(keyframes|font-face|property|counter-style)/i.test(prelude)) {
+      out.push(`${prelude} {${body}}`)
+      continue
+    }
+    if (prelude.startsWith('@')) continue
+
+    const selectors = prelude.split(',').map((s) => s.trim()).filter(Boolean)
+    const globals = selectors.filter((s) => GLOBAL.test(s))
+
+    if (globals.length) {
+      // Keep the custom properties — tokens must resolve — and nothing else.
+      const props = body
+        .split(';')
+        .map((d) => d.trim())
+        .filter((d) => d.startsWith('--'))
+      if (props.length) out.push(`:root {\n  ${props.join(';\n  ')};\n}`)
+    }
+
+    const scoped = selectors.filter((s) => !GLOBAL.test(s))
+    if (!scoped.length) continue
+
+    // A fixed element escapes any scope, so it is pinned to the specimen instead.
+    const safeBody = body.replace(/position\s*:\s*fixed/gi, 'position: absolute')
+
+    out.push(`${scoped.map((s) => `${scope} ${s}`).join(', ')} {${safeBody}}`)
+  }
+
+  return out.join('\n')
+}
+
+/**
+ * Which stylesheets belong to the design system.
+ *
+ * A repository usually ships a docs site beside the library, and its CSS is the
+ * loudest thing in the tree — full-page layouts, headers, changelog styling. None of
+ * it describes a component, and all of it would land on the book.
+ */
+function designSystemCss(facts: SystemFacts): string[] {
+  const isDocs = /(^|\/)(apps|docs|website|www|examples?|playground|stories)\//i
+  const own = facts.cssFiles.filter((f) => !isDocs.test(f))
+  // If filtering removed everything, the docs CSS was all there was.
+  return own.length ? own : facts.cssFiles
+}
+
 /** CSS-escape a Tailwind arbitrary utility so `bg-[#fff]` becomes a real selector. */
 const escClass = (c: string) => c.replace(/([[\]#().%/])/g, '\\$1')
 
@@ -222,16 +312,20 @@ export function buildVisualBook(input: VisualBookInput): string {
   // really is. Left untouched on purpose: the two sides use disjoint class prefixes
   // (`aui-` vs `pl-`), so nothing in it can reach the generated components, and
   // editing it here would make the comparison a lie.
-  const sourceCss = facts.cssFiles
-    .map((rel) => {
-      try {
-        return fs.readFileSync(path.join(facts.root, rel), 'utf8')
-      } catch {
-        return ''
-      }
-    })
-    .join('\n')
-  const utilities = compileSourceUtilities(facts)
+  const sourceSheets = designSystemCss(facts)
+  const sourceCss = scopeCss(
+    sourceSheets
+      .map((rel) => {
+        try {
+          return fs.readFileSync(path.join(facts.root, rel), 'utf8')
+        } catch {
+          return ''
+        }
+      })
+      .join('\n'),
+    '.side-before',
+  )
+  const utilities = scopeCss(compileSourceUtilities(facts), '.side-before')
   const tokenCss = files['1-tokenization/tokens.css'] ?? ''
   const componentCss = components
     .map((c) => files[`2-intent/components/${c.kebab}/${c.name}.css`] ?? '')
@@ -519,7 +613,7 @@ ${componentCss}
 
   <footer>
     <span>${esc(facts.packageName)} · ${facts.components.length} components found · ${components.length} converted · ${delta >= 0 ? '+' : ''}${delta} points measured</span>
-    <span class="mono">Generated by Peel · ${new Date().toISOString().slice(0, 10)}</span>
+    <span class="mono">${sourceSheets.length} source stylesheet(s) scoped · Peel · ${new Date().toISOString().slice(0, 10)}</span>
   </footer>
 </div>
 </body>
