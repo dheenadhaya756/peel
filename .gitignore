@@ -1,0 +1,8 @@
+node_modules
+.next
+data/workspaces/*
+!data/workspaces/.gitkeep
+data/peel.db
+*.log
+.env.local
+tsconfig.tsbuildinfo

@@ -1,0 +1,100 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --font-sans: 'Inter', system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  }
+
+  html {
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    @apply bg-paper text-ink font-sans antialiased;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'ss01';
+  }
+
+  /* Display type is tight-tracked, the Cloudflare/Base44 signature */
+  h1, h2, h3 {
+    @apply tracking-display;
+    font-weight: 560;
+  }
+
+  ::selection {
+    background: theme('colors.flame.200');
+    color: theme('colors.ink.DEFAULT');
+  }
+
+  ::-webkit-scrollbar { width: 10px; height: 10px }
+  ::-webkit-scrollbar-track { background: transparent }
+  ::-webkit-scrollbar-thumb {
+    background: theme('colors.paper.edge');
+    border-radius: 999px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover { background: theme('colors.ink.faint'); background-clip: content-box }
+}
+
+@layer components {
+  /* Frosted pill — the recurring object in every reference */
+  .pill-glass {
+    @apply rounded-pill bg-white/65 backdrop-blur-xl ring-1 ring-white/70 shadow-pill;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-pill px-5 h-10
+           text-[13.5px] font-medium tracking-tight transition-all duration-200
+           disabled:opacity-40 disabled:pointer-events-none select-none whitespace-nowrap;
+  }
+  .btn-primary {
+    @apply btn bg-ink text-paper hover:bg-[#3E2318] active:scale-[.98] shadow-pill;
+  }
+  .btn-flame {
+    @apply btn bg-flame-500 text-white hover:bg-flame-600 active:scale-[.98] shadow-pill;
+  }
+  /* white-on-orange, for use inside a gradient panel */
+  .btn-onglow {
+    @apply btn bg-white text-flame-800 hover:bg-flame-50 active:scale-[.98] shadow-pill;
+  }
+  .btn-ghost {
+    @apply btn bg-white/70 text-ink ring-1 ring-paper-edge hover:bg-white hover:ring-ink-faint/40 backdrop-blur;
+  }
+  .btn-quiet {
+    @apply btn bg-transparent text-ink-soft hover:text-ink hover:bg-paper-sunken px-3;
+  }
+
+  .card {
+    @apply rounded-card bg-paper-raised ring-1 ring-paper-edge shadow-card;
+  }
+
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-pill px-2.5 h-6
+           text-[11px] font-medium tracking-tight ring-1;
+  }
+
+  .mono-label {
+    @apply font-mono text-[10.5px] uppercase tracking-[.14em] text-ink-faint;
+  }
+
+  /* Evidence line — file:line proof beside every finding */
+  .evidence {
+    @apply font-mono text-[11px] text-ink-faint break-all;
+  }
+
+  .field {
+    @apply w-full rounded-pill bg-white ring-1 ring-paper-edge px-4 h-11 text-[13.5px]
+           placeholder:text-ink-faint outline-none transition
+           focus:ring-2 focus:ring-flame-400;
+  }
+}
+
+@layer utilities {
+  .texture-dots { @apply bg-dot-grid bg-[length:22px_22px]; }
+  .no-scrollbar::-webkit-scrollbar { display: none }
+  .no-scrollbar { scrollbar-width: none }
+}

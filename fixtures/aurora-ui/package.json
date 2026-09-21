@@ -1,0 +1,14 @@
+{
+  "name": "aurora-ui",
+  "version": "2.3.1",
+  "private": true,
+  "description": "Aurora design system — React component library",
+  "type": "module",
+  "main": "./src/index.ts",
+  "peerDependencies": { "react": ">=18", "react-dom": ">=18" },
+  "dependencies": {
+    "class-variance-authority": "^0.7.0",
+    "clsx": "^2.1.0",
+    "tailwind-merge": "^2.5.0"
+  }
+}

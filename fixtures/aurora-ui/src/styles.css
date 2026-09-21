@@ -1,0 +1,106 @@
+/* Aurora UI — design tokens and component styles */
+
+:root {
+  /* palette */
+  --blue-50: #eff6ff;
+  --blue-100: #dbeafe;
+  --blue-500: #3b82f6;
+  --blue-600: #2563eb;
+  --blue-700: #1d4ed8;
+  --gray-50: #f8fafc;
+  --gray-100: #f1f5f9;
+  --gray-200: #e2e8f0;
+  --gray-400: #94a3b8;
+  --gray-600: #475569;
+  --gray-900: #0f172a;
+  --red-500: #ef4444;
+  --red-600: #dc2626;
+  --green-500: #22c55e;
+  --amber-500: #f59e0b;
+
+  /* sizing */
+  --size-2: 2px;
+  --size-4: 4px;
+  --size-8: 8px;
+  --size-12: 12px;
+  --size-16: 16px;
+  --size-24: 24px;
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+
+  /* type */
+  --font-12: 12px;
+  --font-14: 14px;
+  --font-16: 16px;
+}
+
+/* Buttons and badges are layered — a consumer utility WINS against these. */
+@layer aurora {
+  .aui-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--size-8);
+    border-radius: var(--radius-md);
+    font-size: var(--font-14);
+    font-weight: 500;
+    transition: background-color 120ms ease;
+    cursor: pointer;
+  }
+
+  .aui-badge {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    padding: 2px 8px;
+    font-size: var(--font-12);
+    font-weight: 500;
+  }
+}
+
+/* Panel, Card and Input are NOT layered. Unlayered CSS beats layered CSS
+   unconditionally, so a consumer utility aimed at these is INERT — it does
+   nothing at all, regardless of specificity or source order. Mixing the two
+   inside one library is the defect: the override outcome is not uniform. */
+.aui-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 24px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+}
+
+.aui-card-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #0f172a;
+  margin: 0 0 8px 0;
+}
+
+.aui-card-body {
+  font-size: 14px;
+  color: #475569;
+}
+
+.aui-panel {
+  background: #f8fafc;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.aui-input {
+  width: 100%;
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 14px;
+  color: #0f172a;
+}
+
+.aui-input:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18);
+}

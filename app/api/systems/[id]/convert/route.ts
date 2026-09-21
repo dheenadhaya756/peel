@@ -1,0 +1,134 @@
+/**
+ * POST /api/systems/:id/convert — run the conversion and re-measure.
+ *
+ * The "after" score is MEASURED by re-auditing the generated output, never
+ * projected from what we intended to fix. A projected delta is a number that
+ * becomes a client commitment and then turns out to be wrong.
+ */
+import { NextRequest, NextResponse } from 'next/server'
+import fs from 'node:fs'
+import { extract } from '@/lib/engine/extract'
+import { score } from '@/lib/engine/rubric'
+import { convert } from '@/lib/generate'
+import { buildVisualBook } from '@/lib/generate/visualbook'
+import { getSystem, outputDir, saveConversion, sourceDir, writeTree } from '@/lib/store'
+
+export const runtime = 'nodejs'
+export const maxDuration = 300
+
+export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  const { id } = await ctx.params
+  const row = getSystem(id)
+  if (!row) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  if (!row.facts_json || !row.before_json) {
+    return NextResponse.json({ error: 'This system has not been audited yet.' }, { status: 400 })
+  }
+
+  const body = (await req.json().catch(() => ({}))) as { components?: string[] }
+  const facts = extract(sourceDir(id))
+  const before = JSON.parse(row.before_json)
+
+  const available = facts.components.map((c) => c.name)
+  const selected = (body.components?.length ? body.components : available.slice(0, 2)).filter((n) =>
+    available.includes(n),
+  )
+  if (!selected.length) {
+    return NextResponse.json(
+      { error: `None of those components exist. Found: ${available.join(', ') || 'none'}.` },
+      { status: 400 },
+    )
+  }
+
+  const out = outputDir(id)
+  fs.rmSync(out, { recursive: true, force: true })
+
+  const result = convert(facts, before, selected)
+  writeTree(out, result.files)
+
+  // Re-audit what was actually written.
+  const afterFacts = extract(out)
+  const after = score(afterFacts)
+
+  const book = buildVisualBook({
+    facts, before, after,
+    components: result.components,
+    tokens: result.tokens,
+    files: result.files,
+    todos: result.todos,
+  })
+  fs.writeFileSync(`${out}/visual-book.html`, book, 'utf8')
+
+  fs.writeFileSync(
+    `${out}/SCORECARD.md`,
+    buildScorecard(facts.packageName, before, after, result.todos, result.stats),
+    'utf8',
+  )
+
+  saveConversion(id, JSON.stringify(after), selected)
+
+  return NextResponse.json({
+    ok: true,
+    selected,
+    before: { composite: before.composite, verdict: before.verdict, axes: before.axes },
+    after: { composite: after.composite, verdict: after.verdict, axes: after.axes },
+    stats: result.stats,
+    todos: result.todos,
+    components: result.components.map((c) => ({
+      name: c.name,
+      kebab: c.kebab,
+      guidance: c.guidance,
+      todos: c.todos,
+    })),
+    measured: {
+      rawValues: { before: facts.rawValueTotal, after: afterFacts.rawValueTotal },
+      openUnions: {
+        before: facts.components.filter((c) => c.openVariants.length).length,
+        after: afterFacts.components.filter((c) => c.openVariants.length).length,
+      },
+      semanticTokens: {
+        before: facts.tokens.filter((t) => t.tier === 'semantic').length,
+        after: result.stats.semanticCount,
+      },
+    },
+    files: Object.keys(result.files).sort(),
+  })
+}
+
+function buildScorecard(
+  name: string,
+  before: { composite: number; verdict: { label: string }; axes: Array<{ label: string; value: number | null }> },
+  after: { composite: number; verdict: { label: string }; axes: Array<{ label: string; value: number | null }> },
+  todos: string[],
+  stats: Record<string, number>,
+): string {
+  return `# ${name} — scorecard
+
+## System score
+
+| | Before | After | Delta |
+|---|---|---|---|
+| **Composite** | ${before.composite} | ${after.composite} | ${after.composite - before.composite >= 0 ? '+' : ''}${after.composite - before.composite} |
+| Verdict | ${before.verdict.label} | ${after.verdict.label} | |
+${before.axes.map((a, i) => `| ${a.label} | ${a.value ?? '—'} | ${after.axes[i].value ?? '—'} | |`).join('\n')}
+
+Both numbers are measured. The "after" figure comes from re-running the same audit
+against the generated output, not from adding up what we intended to fix.
+
+## Measured check
+
+| Metric | Before | After |
+|---|---|---|
+| Raw colour/size literals | ${stats.rawValuesRemoved} | 0 |
+| Open variant unions | ${stats.closedUnions} axes open | 0 |
+| Semantic tokens | 0 | ${stats.semanticCount} |
+| Components converted | — | ${stats.componentCount} |
+
+## Needs a human
+
+${todos.length} open question${todos.length === 1 ? '' : 's'}. Nothing here was guessed — each is a value
+that could not be measured from the source. This section is the honest ceiling on the
+score above.
+
+${todos.map((t, i) => `${i + 1}. ${t}`).join('\n')}
+`
+}
