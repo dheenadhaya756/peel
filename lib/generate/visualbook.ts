@@ -74,14 +74,23 @@ function compileSourceUtilities(facts: SystemFacts): string {
  * specimen renders unstyled, and the panel says so — that is the honest result, and
  * dressing it up would make the comparison meaningless.
  */
-function beforeMarkup(fact: ComponentFact, axis: string, value: string): string {
+function beforeMarkup(
+  fact: ComponentFact,
+  axis: string,
+  value: string,
+  all: ComponentFact[] = [],
+): string {
   const branchClasses = axis === 'base' ? '' : (fact.variantClasses?.[axis]?.[value] ?? '')
   const baseClass = `aui-${fact.name.toLowerCase()}`
 
   if (fact.markup) {
+    // A component assembled from other components renders as a chip unless its
+    // children are expanded. One level is enough to show the real thing without
+    // risking a cycle.
+    const expanded = expandSlots(fact.markup, all)
     // Put the base and variant classes on the root element of the real markup.
     const extra = [baseClass, branchClasses].filter(Boolean).join(' ')
-    return injectClasses(fact.markup, extra)
+    return injectClasses(expanded, extra)
   }
 
   // No JSX could be recovered — say that rather than drawing a box with a name in it.
@@ -110,6 +119,75 @@ function afterMarkup(c: GeneratedComponent, axis: string, value: string): string
     return injectClasses(stripped, cls.slice(1).join(' '))
   }
   return `<span class="${cls.join(' ')}">${esc(c.name)}</span>`
+}
+
+/**
+ * The prop surface, before against after.
+ *
+ * Two identical code blocks side by side read as "nothing happened" and waste the
+ * space that should carry the argument. When the surface is unchanged that is worth
+ * stating once — it usually means the props were ALREADY closed, which is a pass,
+ * not a gap. When it did change, only the changed lines are worth pointing at.
+ */
+function propSurface(before: string, after: string): string {
+  const norm = (s: string) => s.trim().replace(/\r/g, '')
+  if (norm(before) === norm(after)) {
+    return `
+    <div class="code-split">
+      <div class="side">
+        <div class="side-label">Prop surface<span>unchanged — already closed in the source</span></div>
+        <pre class="code">${esc(after)}</pre>
+      </div>
+    </div>`
+  }
+
+  const beforeLines = before.split('\n')
+  const afterLines = after.split('\n')
+  // Compare by prop name, so a reordered surface does not read as a rewrite.
+  const nameOf = (l: string) => l.trim().split(/[?:]/)[0].trim()
+  const beforeByName = new Map(beforeLines.map((l) => [nameOf(l), l]))
+  const afterByName = new Map(afterLines.map((l) => [nameOf(l), l]))
+
+  const mark = (lines: string[], other: Map<string, string>) =>
+    lines
+      .map((l) => {
+        const counterpart = other.get(nameOf(l))
+        const changed = counterpart === undefined || counterpart.trim() !== l.trim()
+        return changed
+          ? `<span class="chg">${esc(l)}</span>`
+          : `<span class="same">${esc(l)}</span>`
+      })
+      .join('\n')
+
+  const changedCount = afterLines.filter((l) => {
+    const c = beforeByName.get(nameOf(l))
+    return c === undefined || c.trim() !== l.trim()
+  }).length
+
+  return `
+    <div class="split code-split">
+      <div class="side">
+        <div class="side-label">Before<span>prop surface</span></div>
+        <pre class="code code-before">${mark(beforeLines, afterByName)}</pre>
+      </div>
+      <div class="side">
+        <div class="side-label">After<span>${changedCount} line${changedCount === 1 ? '' : 's'} changed</span></div>
+        <pre class="code code-after">${mark(afterLines, beforeByName)}</pre>
+      </div>
+    </div>`
+}
+
+/** Replace a nested-component marker with that component's own markup, one level. */
+function expandSlots(html: string, all: ComponentFact[]): string {
+  return html.replace(
+    /<span class="pl-slot" data-component="([^"]+)">[\s\S]*?<\/span>/g,
+    (whole, name: string) => {
+      const child = all.find((c) => c.name === name)
+      if (!child?.markup) return whole
+      const childBase = `aui-${child.name.toLowerCase()}`
+      return injectClasses(child.markup, childBase)
+    },
+  )
 }
 
 /** Add class names to the root element of a static HTML fragment. */
@@ -182,7 +260,7 @@ export function buildVisualBook(input: VisualBookInput): string {
         <div class="split">
           <div class="side side-before">
             <div class="side-label">Before<span>${fact.markup ? 'source markup' : 'no markup recovered'} · ${esc(fact.rawValues.length.toString())} raw values</span></div>
-            <div class="specimens">${values.map((v) => `<div class="spec">${beforeMarkup(fact, axis, v)}<code>${esc(v)}</code></div>`).join('')}</div>
+            <div class="specimens">${values.map((v) => `<div class="spec">${beforeMarkup(fact, axis, v, facts.components)}<code>${esc(v)}</code></div>`).join('')}</div>
           </div>
           <div class="side side-after">
             <div class="side-label">After<span>generated · tokens only</span></div>
@@ -216,16 +294,7 @@ export function buildVisualBook(input: VisualBookInput): string {
 
     ${rows}
 
-    <div class="split code-split">
-      <div class="side">
-        <div class="side-label">Before<span>prop surface</span></div>
-        <pre class="code code-before">${esc(beforeProps)}</pre>
-      </div>
-      <div class="side">
-        <div class="side-label">After<span>prop surface</span></div>
-        <pre class="code code-after">${esc(afterProps)}</pre>
-      </div>
-    </div>
+    ${propSurface(beforeProps, afterProps)}
 
     <div class="guidance">
       <h3>When NOT to use — and what instead</h3>
@@ -327,6 +396,10 @@ h3{font-size:14px;letter-spacing:.01em;margin:24px 0 8px;font-weight:600}
 .code{font-family:"JetBrains Mono",monospace;font-size:11.5px;line-height:1.75;
   margin:0;padding:16px 18px;white-space:pre-wrap;color:var(--ink-soft)}
 .code-before{background:#FFF9F3}
+.code .same{opacity:.45}
+.code .chg{display:inline-block;width:100%;background:rgba(255,107,26,.10);
+  border-left:2px solid var(--flame);margin-left:-18px;padding-left:16px}
+.code-after .chg{background:rgba(47,125,82,.10);border-left-color:var(--good)}
 .code-split{margin-top:20px}
 
 .guidance{margin-top:26px;border-top:1px solid var(--edge);padding-top:20px}
