@@ -13,8 +13,11 @@ import type { SystemFacts, Scorecard } from '../engine/types'
 import { deriveTokens, tokensToCss, type GeneratedToken } from './tokens'
 import { generateComponent, type GeneratedComponent } from './component'
 import { archetypeFor } from './knowledge'
-import { enrichAll } from './enrich'
+import { enrichAll, type Override } from './enrich'
 import { renderComponent, type RenderedComponent } from './style'
+import {
+  buildContract, buildDtcg, buildIndex, buildPropCanon, buildSkills, buildStyleDictionaryConfig,
+} from './layers'
 import {
   buildCi, buildConformanceChecker, buildDocsCheck, buildEslintConfig, buildStories,
 } from './enforcement'
@@ -44,6 +47,7 @@ export async function convert(
   before: Scorecard,
   selected: string[],
   onPhase: OnPhase = () => {},
+  overrides: Record<string, Override> = {},
 ): Promise<ConversionResult> {
   const files: Record<string, string> = {}
 
@@ -55,16 +59,25 @@ export async function convert(
     `${tokens.length - semanticCount} primitives → ${semanticCount} semantic, named from the variant each value already lives in`,
   )
 
-  const picked = facts.components.filter((c) => selected.includes(c.name))
+  const picked = facts.components
+    .filter((c) => selected.includes(c.name))
+    // A default chosen at the gate replaces the one that would have been assumed.
+    .map((c) => {
+      const d = overrides[c.name]?.defaultVariants
+      return d ? { ...c, defaultVariants: { ...c.defaultVariants, ...d } } : c
+    })
 
   // Judgment first, so each component is generated WITH it rather than patched after.
   // Measured JSDoc wins, then recorded archetypes, then the model for what is left.
-  const judgments = await enrichAll(picked, facts.packageName)
+  const judgments = await enrichAll(picked, facts.packageName, undefined, overrides)
   const generatedCount = [...judgments.values()].filter((j) => j.generated.length).length
+  const correctedCount = [...judgments.values()].filter((j) => j.corrected?.length).length
   onPhase(
     'judgment',
     'Fill the judgment fields',
-    generatedCount
+    correctedCount
+      ? `${correctedCount} corrected at the gate · ${picked.length - generatedCount - correctedCount} from source · ${generatedCount} from the model`
+      : generatedCount
       ? `${picked.length - generatedCount} answered from source or archetype · ${generatedCount} filled by the model`
       : `all ${picked.length} answered from source documentation or recorded archetypes`,
   )
@@ -97,12 +110,18 @@ export async function convert(
   })
   const todos = components.flatMap((c) => c.todos)
 
-  /* -------------------------------------------------------------- tokens */
+  /* ============================== 1 · TOKENIZATION ==============================
+   * Values and definitions — where building or auditing starts.
+   *
+   * Emitted in DTCG so the layer is consumable by Style Dictionary, Tokens Studio
+   * and Figma Variables, not only by this output. A token layer that one tool can
+   * read is a private format wearing a standard's name. */
 
-  files['tokens/tokens.css'] = tokensToCss(tokens)
-  files['tokens/tokens.json'] = JSON.stringify(
+  files['1-tokenization/tokens.dtcg.json'] = buildDtcg(tokens, facts.packageName)
+  files['1-tokenization/tokens.css'] = tokensToCss(tokens)
+  files['1-tokenization/style-dictionary.config.js'] = buildStyleDictionaryConfig()
+  files['1-tokenization/tokens.json'] = JSON.stringify(
     {
-      $schema: './tokens.schema.json',
       tiers: ['primitive', 'semantic'],
       generatedFrom: facts.packageName,
       tokens: tokens.map((t) => ({
@@ -113,34 +132,105 @@ export async function convert(
     null, 2,
   )
 
-  /* ---------------------------------------------------------- components */
+  onPhase(
+    'layer1',
+    '1 · Tokenization',
+    `${tokens.length} tokens in DTCG · ${semanticCount} semantic, the only tier a component may consume`,
+  )
+
+  /* ================================= 2 · INTENT =================================
+   * Component logic and metadata; the codebase is the source of truth.
+   *
+   * The contract is framework-agnostic JSON rather than TypeScript, because a
+   * contract expressed only as types is unreadable to anything that does not
+   * compile TypeScript — which includes Figma, most agents, and every other
+   * platform this system will eventually target. */
 
   for (const c of components) {
-    for (const [name, body] of Object.entries(c.files)) {
-      files[`components/${c.kebab}/${name}`] = body
-    }
-    files[`components/${c.kebab}/guidance.yaml`] = YAML.stringify(c.guidance, { lineWidth: 100 })
-    files[`components/${c.kebab}/${c.name}.stories.tsx`] = buildStories(c)
+    const dir = `2-intent/components/${c.kebab}`
+    for (const [name, body] of Object.entries(c.files)) files[`${dir}/${name}`] = body
+    files[`${dir}/guidance.yaml`] = YAML.stringify(c.guidance, { lineWidth: 100 })
+    files[`${dir}/${c.name}.contract.json`] = buildContract(c, facts.packageName)
+    files[`${dir}/${c.name}.stories.tsx`] = buildStories(c)
   }
 
-  files['components/index.ts'] =
-    components.map((c) => `export { ${c.name} } from './${c.kebab}/${c.name}'\nexport type { ${c.name}Props } from './${c.kebab}/${c.name}'`).join('\n') + '\n'
+  files['2-intent/index.ts'] =
+    components
+      .map(
+        (c) =>
+          `export { ${c.name} } from './components/${c.kebab}/${c.name}'\n` +
+          `export type { ${c.name}Props } from './components/${c.kebab}/${c.name}'`,
+      )
+      .join('\n') + '\n'
 
-  files['styles.css'] =
-    `/* Generated. Import this once at your app root. */\n@import './tokens/tokens.css';\n` +
+  files['2-intent/styles.css'] =
+    `/* Import once at your app root. */\n@import '../1-tokenization/tokens.css';\n` +
     components.map((c) => `@import './components/${c.kebab}/${c.name}.css';`).join('\n') + '\n'
 
   onPhase(
-    'contract',
-    'L2 · Contract',
-    `${components.length} guidance.yaml written · manifest assembled by reading them, never hand-written`,
+    'layer2',
+    '2 · Intent',
+    `${components.length} component(s) · code, contract.json, guidance.yaml and stories each`,
   )
 
-  /* ------------------------------------------------- manifest — assembled */
+  /* ================================ 3 · INDEXING ================================
+   * Mapping relationships; the infrastructure that makes reports cheap.
+   *
+   * This is the layer that is usually missing, and its absence is what makes
+   * governance expensive: without a relationship map every audit has to re-read the
+   * whole system, so nobody runs one. With it, a report is a query. */
+
+  files['3-indexing/index.json'] = buildIndex(components, tokens, facts)
+  files['3-indexing/prop-canon.json'] = buildPropCanon(components)
+  files['3-indexing/llms.txt'] = buildLlmsTxt(components, facts)
+
+  const canon = JSON.parse(files['3-indexing/prop-canon.json']) as { conflicts: unknown[] }
+  const idx = JSON.parse(files['3-indexing/index.json']) as { counts: Record<string, number> }
+  onPhase(
+    'layer3',
+    '3 · Indexing',
+    `${idx.counts.aliases} aliases · ${idx.counts.lookalikeRules} lookalike rules · ` +
+      `${idx.counts.axes} axes indexed · ${canon.conflicts.length} prop-naming conflict(s)`,
+  )
+
+  /* ============================== 4 · ORCHESTRATION =============================
+   * Instructions, rules and skills.
+   *
+   * Rules state what is true; skills say how to do a specific job with this system
+   * in front of you; gates make both fail a build rather than a review. */
+
+  files['4-orchestration/AGENTS.md'] = buildAgents(components, facts, tokens)
+  files['4-orchestration/RULES.md'] = buildRules(facts, tokens)
+  files['4-orchestration/curation.json'] = buildCuration(components, facts)
+  files['4-orchestration/design.md'] = buildDesignMd(facts, tokens, components)
+
+  for (const [path, body] of Object.entries(buildSkills(components, facts.packageName))) {
+    files[`4-orchestration/skills/${path}`] = body
+  }
+
+  files['4-orchestration/gates/check-conformance.mjs'] = buildConformanceChecker(tokens, components)
+  files['4-orchestration/gates/check-docs.mjs'] = buildDocsCheck()
+  files['4-orchestration/gates/design-system.yml'] = buildCi(facts.packageName)
+  files['4-orchestration/gates/eslint.config.js'] = buildEslintConfig()
+
+  onPhase(
+    'layer4',
+    '4 · Orchestration',
+    'AGENTS.md, RULES.md, 3 skills and 4 gates — rules that fail a build rather than a review',
+  )
+
+  /* ---------------------------------------------------------------- manifest */
 
   files['manifest.json'] = JSON.stringify(
     {
       system: facts.packageName,
+      architecture: 'four-layer agentic design system',
+      layers: {
+        '1-tokenization': 'values and definitions — DTCG, Style Dictionary ready',
+        '2-intent': 'component logic and metadata — code is the source of truth',
+        '3-indexing': 'relationship mapping — makes a report a query, not a crawl',
+        '4-orchestration': 'instructions, rules, skills and gates',
+      },
       generated: new Date().toISOString(),
       // Assembled BY READING the guidance files, never hand-written — a
       // hand-maintained index drifts from what it describes within one release.
@@ -156,6 +246,7 @@ export async function convert(
         states: c.guidance.states,
         a11y: c.guidance.a11y,
         tokens: c.guidance.tokens,
+        contract: `2-intent/components/${c.kebab}/${c.name}.contract.json`,
         import: `import { ${c.name} } from '${facts.packageName}-agent-ready'`,
       })),
       tokens: tokens.map((t) => ({ name: t.name, tier: t.tier, value: t.value })),
@@ -163,51 +254,36 @@ export async function convert(
     null, 2,
   )
 
-  onPhase('knowledge', 'L3 · Knowledge', 'AGENTS.md, llms.txt, RULES.md, curation.json, design.md — generated FROM L2 so they cannot drift')
-
-  /* ------------------------------------------------------ L3 knowledge base */
-
-  files['llms.txt'] = buildLlmsTxt(components, facts)
-  files['AGENTS.md'] = buildAgents(components, facts, tokens)
-  files['RULES.md'] = buildRules(facts, tokens)
-  files['curation.json'] = buildCuration(components, facts)
-  files['design.md'] = buildDesignMd(facts, tokens, components)
-
-  onPhase('enforcement', 'Enforcement', 'conformance checker, docs-freshness gate, CI workflow, one story per variant and state')
-
-  /* --------------------------------------------------- enforcement, so rules bite */
-
-  files['scripts/check-conformance.mjs'] = buildConformanceChecker(tokens, components)
-  files['scripts/check-docs.mjs'] = buildDocsCheck()
-  files['.github/workflows/design-system.yml'] = buildCi(facts.packageName)
-  files['eslint.config.js'] = buildEslintConfig()
-
   files['package.json'] = JSON.stringify(
     {
       name: `${facts.packageName}-agent-ready`,
       version: '1.0.0',
       type: 'module',
-      description: `${facts.packageName}, converted to an agent-readable contract.`,
-      types: './components/index.ts',
+      description: `${facts.packageName}, converted to a four-layer agentic design system.`,
+      types: './2-intent/index.ts',
       exports: {
-        '.': './components/index.ts',
-        './styles.css': './styles.css',
+        '.': './2-intent/index.ts',
+        './styles.css': './2-intent/styles.css',
+        './tokens': './1-tokenization/tokens.dtcg.json',
+        './index': './3-indexing/index.json',
         './manifest.json': './manifest.json',
-        './.peel/*': './*',
       },
-      files: ['components', 'tokens', 'styles.css', 'manifest.json', 'AGENTS.md', 'llms.txt', 'RULES.md', 'curation.json', 'design.md'],
+      files: ['1-tokenization', '2-intent', '3-indexing', '4-orchestration', 'manifest.json'],
       // Discoverable from inside node_modules — this is how a tool finds the docs.
       agentDocs: {
-        rules: './RULES.md',
-        guide: './AGENTS.md',
-        index: './llms.txt',
+        rules: './4-orchestration/RULES.md',
+        guide: './4-orchestration/AGENTS.md',
+        index: './3-indexing/llms.txt',
+        relationships: './3-indexing/index.json',
         components: './manifest.json',
-        curation: './curation.json',
-        design: './design.md',
+        curation: './4-orchestration/curation.json',
+        design: './4-orchestration/design.md',
+        skills: './4-orchestration/skills',
       },
       scripts: {
-        'check:conformance': 'node scripts/check-conformance.mjs src',
-        'docs:check': 'node scripts/check-docs.mjs',
+        'check:conformance': 'node 4-orchestration/gates/check-conformance.mjs src',
+        'docs:check': 'node 4-orchestration/gates/check-docs.mjs',
+        'tokens:build': 'style-dictionary build --config 1-tokenization/style-dictionary.config.js',
         typecheck: 'tsc --noEmit',
       },
       peerDependencies: { react: '>=18', 'react-dom': '>=18' },

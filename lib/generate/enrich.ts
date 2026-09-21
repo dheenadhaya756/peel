@@ -26,6 +26,8 @@ export interface Judgment {
   a11y: { role: string; requiredLabel: string; keyboard: string }
   /** Which fields came from the model rather than from source or archetype. */
   generated: string[]
+  /** Fields a reviewer corrected at the gate. */
+  corrected?: string[]
 }
 
 const SYSTEM = `You document design-system components so an AI agent can pick the right one.
@@ -200,10 +202,18 @@ function enrichFallback(j: Judgment, fact: ComponentFact, systemName: string): J
 }
 
 /** Enrich several components, bounded so a large selection cannot hang a conversion. */
+export interface Override {
+  purpose?: string
+  aliases?: string[]
+  useInstead?: Array<{ when: string; use: string }>
+  defaultVariants?: Record<string, string>
+}
+
 export async function enrichAll(
   facts: ComponentFact[],
   systemName: string,
   onEach?: (name: string, j: Judgment) => void,
+  overrides: Record<string, Override> = {},
 ): Promise<Map<string, Judgment>> {
   const out = new Map<string, Judgment>()
   // Small concurrency: enough to be quick, not enough to rate-limit a local gateway.
@@ -213,6 +223,18 @@ export async function enrichAll(
       const f = queue.shift()
       if (!f) return
       const j = await enrich(f, systemName)
+      // A reviewer's correction is the most authoritative source there is — it
+      // outranks the source's own docs, because the reviewer has seen both.
+      const o = overrides[f.name]
+      if (o) {
+        if (o.purpose) j.purpose = o.purpose
+        if (o.aliases?.length) j.aliases = o.aliases
+        if (o.useInstead?.length) j.useInstead = o.useInstead.filter((u) => u.when && u.use)
+        j.generated = j.generated.filter(
+          (g) => !(g === 'purpose' && o.purpose) && !(g === 'aliases' && o.aliases?.length) && !(g === 'useInstead' && o.useInstead?.length),
+        )
+        j.corrected = Object.keys(o).filter((k) => (o as Record<string, unknown>)[k])
+      }
       out.set(f.name, j)
       onEach?.(f.name, j)
     }

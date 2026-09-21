@@ -232,9 +232,9 @@ export function buildVisualBook(input: VisualBookInput): string {
     })
     .join('\n')
   const utilities = compileSourceUtilities(facts)
-  const tokenCss = files['tokens/tokens.css'] ?? ''
+  const tokenCss = files['1-tokenization/tokens.css'] ?? ''
   const componentCss = components
-    .map((c) => files[`components/${c.kebab}/${c.name}.css`] ?? '')
+    .map((c) => files[`2-intent/components/${c.kebab}/${c.name}.css`] ?? '')
     .join('\n')
 
   const semantic = tokens.filter((t) => t.tier === 'semantic')

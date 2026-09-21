@@ -23,7 +23,10 @@ export const maxDuration = 300
 
 export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params
-  const body = (await req.json().catch(() => ({}))) as { components?: string[] }
+  const body = (await req.json().catch(() => ({}))) as {
+    components?: string[]
+    overrides?: Record<string, Record<string, unknown>>
+  }
 
   return streamResponse(async (report) => {
     const row = getSystem(id)
@@ -50,9 +53,11 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     fs.rmSync(out, { recursive: true, force: true })
 
     // Each generator phase reports what it produced as it produces it.
-    const result = await convert(facts, before, selected, (step, label, detail) => {
-      report.step(step, label)(detail)
-    })
+    const result = await convert(
+      facts, before, selected,
+      (step, label, detail) => { report.step(step, label)(detail) },
+      (body.overrides ?? {}) as never,
+    )
 
     const endWrite = report.step('write', 'Write the output tree')
     writeTree(out, result.files)

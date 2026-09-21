@@ -6,6 +6,7 @@ import { ReportPanel } from './panels/report'
 import { CodePanel, VisualPanel } from './panels/visual'
 import { ConnectButton } from './connect'
 import { ProcessPanel, useProcess } from './process'
+import { ReviewPanel, type Overrides, type Proposal } from './panels/review'
 import { readProgress } from '@/lib/progress'
 import type { ConvertResult, SystemDetail, SystemSummary } from './types'
 
@@ -21,6 +22,7 @@ export function Workbench() {
   const [busy, setBusy] = React.useState<string | null>(null)
   const [toast, setToast] = React.useState<{ tone: 'ok' | 'bad'; text: string } | null>(null)
   const proc = useProcess()
+  const [proposals, setProposals] = React.useState<Proposal[] | null>(null)
 
   const say = (tone: 'ok' | 'bad', text: string) => {
     setToast({ tone, text })
@@ -49,7 +51,7 @@ export function Workbench() {
 
   React.useEffect(() => { loadSystems() }, [loadSystems])
   React.useEffect(() => {
-    if (activeId) { loadDetail(activeId); setResult(null); setTab('report') }
+    if (activeId) { loadDetail(activeId); setResult(null); setProposals(null); setTab('report') }
   }, [activeId, loadDetail])
 
   /** Run a streaming endpoint, surfacing each phase as it happens. */
@@ -95,21 +97,40 @@ export function Workbench() {
     }
   }
 
-  async function runConvert() {
+  /** Step one of the gate: propose the contract, write nothing. */
+  async function runReview() {
+    if (!activeId) return
+    setBusy('review')
+    try {
+      const data = await stream(`/api/systems/${activeId}/review`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ components: selected }),
+      })
+      setProposals((data as unknown as { proposals: Proposal[] }).proposals)
+    } catch (e) {
+      say('bad', e instanceof Error ? e.message : 'Could not propose a contract')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function runConvert(overrides: Overrides = {}) {
     if (!activeId) return
     setBusy('convert')
     try {
       const data = await stream(`/api/systems/${activeId}/convert`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ components: selected }),
+        body: JSON.stringify({ components: selected, overrides }),
       })
       const d = data as unknown as ConvertResult
       setResult(d)
       await loadSystems()
       await loadDetail(activeId)
+      setProposals(null)
       setTab('visual')
-      say('ok', `${d.before.composite} → ${d.after.composite}. ${d.todos.length} open question(s).`)
+      say('ok', `${d.before.composite} → ${d.after.composite}. ${d.todos.length} recorded decision(s).`)
     } catch (e) {
       say('bad', e instanceof Error ? e.message : 'Conversion failed')
     } finally {
@@ -181,15 +202,31 @@ export function Workbench() {
                     failed={proc.failed}
                   />
                 ) : null}
-                {busy !== 'convert' && tab === 'report' && detail.facts && detail.before && (
+                {busy !== 'convert' && busy !== 'review' && proposals && tab === 'report' && (
+                  <ReviewPanel
+                    proposals={proposals}
+                    onBack={() => setProposals(null)}
+                    onConfirm={runConvert}
+                    converting={false}
+                  />
+                )}
+                {busy === 'review' ? (
+                  <ProcessPanel
+                    title="Proposing the contract"
+                    subtitle="Reading what the source states, inferring what it does not, and marking which is which. Nothing is written by this pass."
+                    steps={proc.steps}
+                    failed={proc.failed}
+                  />
+                ) : null}
+                {busy !== 'convert' && busy !== 'review' && !proposals && tab === 'report' && detail.facts && detail.before && (
                   <ReportPanel
                     facts={detail.facts}
                     before={detail.before}
                     after={detail.after}
                     selected={selected}
                     onSelect={setSelected}
-                    onConvert={runConvert}
-                    converting={busy === 'convert'}
+                    onConvert={runReview}
+                    converting={busy === 'review'}
                   />
                 )}
                 {busy !== 'convert' && tab === 'visual' && <VisualPanel system={detail} result={result} />}
@@ -430,7 +467,19 @@ function Welcome({ onSample, busy }: { onSample: () => void; busy: boolean }) {
 /* ----------------------------------------------------------- knowledge base */
 
 function KnowledgePanel({ system }: { system: SystemDetail }) {
-  const KB = ['AGENTS.md', 'llms.txt', 'RULES.md', 'curation.json', 'design.md', 'manifest.json', 'SCORECARD.md']
+  const KB = [
+    '4-orchestration/AGENTS.md',
+    '4-orchestration/RULES.md',
+    '4-orchestration/design.md',
+    '4-orchestration/curation.json',
+    '4-orchestration/skills/ds-choose/SKILL.md',
+    '3-indexing/index.json',
+    '3-indexing/prop-canon.json',
+    '3-indexing/llms.txt',
+    '1-tokenization/tokens.dtcg.json',
+    'manifest.json',
+    'SCORECARD.md',
+  ]
   const present = KB.filter((f) => system.output.includes(f))
   const [active, setActive] = React.useState(present[0] ?? null)
   const [body, setBody] = React.useState('')
@@ -463,7 +512,7 @@ function KnowledgePanel({ system }: { system: SystemDetail }) {
               active === f ? 'bg-ink text-paper ring-ink' : 'bg-white ring-paper-edge text-ink-soft hover:ring-ink-faint/50',
             )}
           >
-            {f}
+            {f.split('/').pop()}
           </button>
         ))}
       </div>

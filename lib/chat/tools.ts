@@ -214,7 +214,7 @@ export const TOOLS: ToolDef[] = [
     description: 'The generated do/do-not card for this system. Every rule comes from a real audit finding on it.',
     parameters: { type: 'object', properties: {} },
     run: (_a, ctx) => ({
-      text: readOutput(ctx, 'RULES.md') ?? 'Convert the system first — RULES.md is generated from its audit findings.',
+      text: readOutput(ctx, '4-orchestration/RULES.md') ?? 'Convert the system first — RULES.md is generated from its audit findings.',
     }),
   },
 

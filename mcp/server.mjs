@@ -249,7 +249,7 @@ function callTool(name, args) {
     }
 
     case 'get_rules':
-      return text(readOutput(system, 'RULES.md') ?? 'No RULES.md was generated for this system.')
+      return text(readOutput(system, '4-orchestration/RULES.md') ?? 'No RULES.md was generated for this system.')
 
     case 'check_code': {
       const findings = []
@@ -323,11 +323,16 @@ server.setRequestHandler(ListResourcesRequestSchema, async () => {
   const resources = []
   for (const s of systems()) {
     if (!s.converted) continue
-    for (const f of ['AGENTS.md', 'llms.txt', 'RULES.md', 'design.md', 'curation.json', 'manifest.json']) {
+    for (const f of [
+      '4-orchestration/AGENTS.md', '4-orchestration/RULES.md',
+      '4-orchestration/design.md', '4-orchestration/curation.json',
+      '3-indexing/llms.txt', '3-indexing/index.json', '3-indexing/prop-canon.json',
+      'manifest.json',
+    ]) {
       if (fs.existsSync(path.join(outputDir(s.id), f))) {
         resources.push({
           uri: `peel://${s.id}/${f}`,
-          name: `${s.name} — ${f}`,
+          name: `${s.name} — ${f.split('/').pop()}`,
           mimeType: f.endsWith('.json') ? 'application/json' : 'text/markdown',
         })
       }
