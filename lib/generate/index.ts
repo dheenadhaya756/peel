@@ -32,16 +32,37 @@ export interface ConversionResult {
   }
 }
 
+/** Called per phase so the caller can stream what is happening. */
+export type OnPhase = (id: string, label: string, detail?: string) => void
+
 export function convert(
   facts: SystemFacts,
   before: Scorecard,
   selected: string[],
+  onPhase: OnPhase = () => {},
 ): ConversionResult {
   const files: Record<string, string> = {}
+
   const tokens = deriveTokens(facts)
+  const semanticCount = tokens.filter((t) => t.tier === 'semantic').length
+  onPhase(
+    'tokens',
+    'Derive token layer',
+    `${tokens.length - semanticCount} primitives → ${semanticCount} semantic, named from the variant each value already lives in`,
+  )
+
   const picked = facts.components.filter((c) => selected.includes(c.name))
 
-  const components = picked.map((f) => generateComponent(f, tokens))
+  const components = picked.map((f) => {
+    const g = generateComponent(f, tokens)
+    const axes = Object.keys(g.guidance.variants)
+    onPhase(
+      `component:${g.kebab}`,
+      `L1 · ${g.name}`,
+      `${f.rawValues.length} raw values removed · ${axes.length} axes closed (${axes.join(', ') || 'none'}) · ${g.consumes.length} tokens consumed`,
+    )
+    return g
+  })
   const todos = components.flatMap((c) => c.todos)
 
   /* -------------------------------------------------------------- tokens */
@@ -77,6 +98,12 @@ export function convert(
     `/* Generated. Import this once at your app root. */\n@import './tokens/tokens.css';\n` +
     components.map((c) => `@import './components/${c.kebab}/${c.name}.css';`).join('\n') + '\n'
 
+  onPhase(
+    'contract',
+    'L2 · Contract',
+    `${components.length} guidance.yaml written · manifest assembled by reading them, never hand-written`,
+  )
+
   /* ------------------------------------------------- manifest — assembled */
 
   files['manifest.json'] = JSON.stringify(
@@ -104,6 +131,8 @@ export function convert(
     null, 2,
   )
 
+  onPhase('knowledge', 'L3 · Knowledge', 'AGENTS.md, llms.txt, RULES.md, curation.json, design.md — generated FROM L2 so they cannot drift')
+
   /* ------------------------------------------------------ L3 knowledge base */
 
   files['llms.txt'] = buildLlmsTxt(components, facts)
@@ -111,6 +140,8 @@ export function convert(
   files['RULES.md'] = buildRules(facts, tokens)
   files['curation.json'] = buildCuration(components, facts)
   files['design.md'] = buildDesignMd(facts, tokens, components)
+
+  onPhase('enforcement', 'Enforcement', 'conformance checker, docs-freshness gate, CI workflow, one story per variant and state')
 
   /* --------------------------------------------------- enforcement, so rules bite */
 

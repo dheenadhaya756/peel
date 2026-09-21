@@ -5,6 +5,8 @@ import { Empty, Spinner, VerdictChip, cx } from './primitives'
 import { ReportPanel } from './panels/report'
 import { CodePanel, VisualPanel } from './panels/visual'
 import { ConnectButton } from './connect'
+import { ProcessPanel, useProcess } from './process'
+import { readProgress } from '@/lib/progress'
 import type { ConvertResult, SystemDetail, SystemSummary } from './types'
 
 type Tab = 'report' | 'visual' | 'code' | 'knowledge'
@@ -18,6 +20,7 @@ export function Workbench() {
   const [selected, setSelected] = React.useState<string[]>([])
   const [busy, setBusy] = React.useState<string | null>(null)
   const [toast, setToast] = React.useState<{ tone: 'ok' | 'bad'; text: string } | null>(null)
+  const proc = useProcess()
 
   const say = (tone: 'ok' | 'bad', text: string) => {
     setToast({ tone, text })
@@ -49,20 +52,42 @@ export function Workbench() {
     if (activeId) { loadDetail(activeId); setResult(null); setTab('report') }
   }, [activeId, loadDetail])
 
+  /** Run a streaming endpoint, surfacing each phase as it happens. */
+  async function stream(
+    url: string,
+    init: RequestInit,
+  ): Promise<Record<string, unknown> | null> {
+    proc.reset()
+    let payload: Record<string, unknown> | null = null
+    let failure: string | null = null
+
+    const res = await fetch(url, init)
+    await readProgress(res, (e) => {
+      proc.apply(e)
+      if (e.type === 'result') payload = e.data as Record<string, unknown>
+      if (e.type === 'error') failure = e.message ?? 'Failed'
+    })
+
+    await proc.flushed()
+    if (failure) throw new Error(failure)
+    if (!payload) throw new Error('The process ended without returning a result.')
+    return payload
+  }
+
   async function ingest(payload: Record<string, unknown> | FormData) {
     setBusy('ingest')
+    setDetail(null)
     try {
-      const res = await fetch('/api/systems', {
+      const data = await stream('/api/systems', {
         method: 'POST',
         ...(payload instanceof FormData
           ? { body: payload }
           : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) }),
       })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error ?? 'Ingest failed')
+      const d = data as unknown as { id: string; name: string; fileCount: number; before: { composite: number } }
       await loadSystems()
-      setActiveId(data.id)
-      say('ok', `Ingested ${data.name} — ${data.fileCount} files, scored ${data.before.composite}/100.`)
+      setActiveId(d.id)
+      say('ok', `Ingested ${d.name} — ${d.fileCount} files, scored ${d.before.composite}/100.`)
     } catch (e) {
       say('bad', e instanceof Error ? e.message : 'Ingest failed')
     } finally {
@@ -74,18 +99,17 @@ export function Workbench() {
     if (!activeId) return
     setBusy('convert')
     try {
-      const res = await fetch(`/api/systems/${activeId}/convert`, {
+      const data = await stream(`/api/systems/${activeId}/convert`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ components: selected }),
       })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error ?? 'Conversion failed')
-      setResult(data)
+      const d = data as unknown as ConvertResult
+      setResult(d)
       await loadSystems()
       await loadDetail(activeId)
       setTab('visual')
-      say('ok', `${data.before.composite} → ${data.after.composite}. ${data.todos.length} open question(s).`)
+      say('ok', `${d.before.composite} → ${d.after.composite}. ${d.todos.length} open question(s).`)
     } catch (e) {
       say('bad', e instanceof Error ? e.message : 'Conversion failed')
     } finally {
@@ -129,8 +153,15 @@ export function Workbench() {
         />
 
         <main className="flex-1 min-w-0 flex flex-col border-x border-paper-edge bg-paper">
-          {!detail ? (
-            <Welcome onSample={() => ingest({ sample: true })} busy={busy === 'ingest'} />
+          {busy === 'ingest' ? (
+            <ProcessPanel
+              title="Auditing the design system"
+              subtitle="Nothing is written during this pass. The source is copied, read, and scored — every finding carries the line that proves it."
+              steps={proc.steps}
+              failed={proc.failed}
+            />
+          ) : !detail ? (
+            <Welcome onSample={() => ingest({ sample: true })} busy={false} />
           ) : (
             <>
               <Tabs
@@ -142,7 +173,15 @@ export function Workbench() {
                 busy={busy}
               />
               <div className="flex-1 min-h-0 overflow-y-auto">
-                {tab === 'report' && detail.facts && detail.before && (
+                {busy === 'convert' ? (
+                  <ProcessPanel
+                    title="Converting to a three-layer contract"
+                    subtitle="Generated in dependency order — code, then contract, then knowledge. Nothing touches your source, and the after-score is measured on the output rather than projected."
+                    steps={proc.steps}
+                    failed={proc.failed}
+                  />
+                ) : null}
+                {busy !== 'convert' && tab === 'report' && detail.facts && detail.before && (
                   <ReportPanel
                     facts={detail.facts}
                     before={detail.before}
@@ -153,9 +192,9 @@ export function Workbench() {
                     converting={busy === 'convert'}
                   />
                 )}
-                {tab === 'visual' && <VisualPanel system={detail} result={result} />}
-                {tab === 'code' && <CodePanel system={detail} />}
-                {tab === 'knowledge' && <KnowledgePanel system={detail} />}
+                {busy !== 'convert' && tab === 'visual' && <VisualPanel system={detail} result={result} />}
+                {busy !== 'convert' && tab === 'code' && <CodePanel system={detail} />}
+                {busy !== 'convert' && tab === 'knowledge' && <KnowledgePanel system={detail} />}
               </div>
             </>
           )}
