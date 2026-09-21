@@ -66,34 +66,65 @@ function compileSourceUtilities(facts: SystemFacts): string {
   return [...rules].join('\n')
 }
 
-/** The markup the source component would produce for one variant. */
+/**
+ * The BEFORE specimen: the markup the source component really returns, recovered
+ * from its JSX, with the variant's own classes applied to the root.
+ *
+ * Nothing is invented. When the source ships no stylesheet for those classes the
+ * specimen renders unstyled, and the panel says so — that is the honest result, and
+ * dressing it up would make the comparison meaningless.
+ */
 function beforeMarkup(fact: ComponentFact, axis: string, value: string): string {
   const branchClasses = axis === 'base' ? '' : (fact.variantClasses?.[axis]?.[value] ?? '')
-  // The cva base class is the first argument; recover it from the component name.
   const baseClass = `aui-${fact.name.toLowerCase()}`
-  const el = /input/i.test(fact.name) ? 'input' : /button/i.test(fact.name) ? 'button' : 'div'
-  const cls = `${baseClass} ${branchClasses}`.trim()
-  const label = `${fact.name} ${value}`
-  if (el === 'input') return `<input class="${esc(cls)}" placeholder="${esc(label)}" />`
-  if (el === 'button') return `<button class="${esc(cls)}">${esc(label)}</button>`
-  return `<div class="${esc(cls)}"><strong>${esc(fact.name)}</strong><br/>${esc(value)}</div>`
+
+  if (fact.markup) {
+    // Put the base and variant classes on the root element of the real markup.
+    const extra = [baseClass, branchClasses].filter(Boolean).join(' ')
+    return injectClasses(fact.markup, extra)
+  }
+
+  // No JSX could be recovered — say that rather than drawing a box with a name in it.
+  return `<div class="pl-nomarkup">no markup could be recovered from source</div>`
 }
 
-/** The markup the generated component produces for one variant. */
+/** The AFTER specimen: the generated component, rendered from the token layer. */
 function afterMarkup(c: GeneratedComponent, axis: string, value: string): string {
   const base = `pl-${c.kebab}`
-  const el = /input/i.test(c.name) ? 'input' : /button/i.test(c.name) ? 'button' : 'div'
-  // Include the default of every OTHER axis so the sample is a real rendering.
   const others = Object.keys(c.guidance.variants)
     .filter((a) => a !== axis)
     .map((a) => `${base}--${c.guidance.defaultVariants[a]}`)
-  const cls = axis === 'base'
-    ? [base, ...Object.keys(c.guidance.variants).map((a) => `${base}--${c.guidance.defaultVariants[a]}`)].join(' ')
-    : [base, `${base}--${value}`, ...others].join(' ')
-  const label = `${c.name} ${value}`
-  if (el === 'input') return `<input class="${cls}" placeholder="${esc(label)}" />`
-  if (el === 'button') return `<button class="${cls}">${esc(label)}</button>`
-  return `<div class="${cls}"><strong>${esc(c.name)}</strong><br/>${esc(value)}</div>`
+  const cls =
+    axis === 'base'
+      ? [base, ...Object.keys(c.guidance.variants).map((a) => `${base}--${c.guidance.defaultVariants[a]}`)]
+      : [base, `${base}--${value}`, ...others]
+
+  if (c.preview) {
+    // The preview is rendered for ONE variant and bakes that modifier in. Strip any
+    // modifier before adding this specimen's, or two apply at once and the winner is
+    // decided by the order the rules happen to appear in — not by the specimen.
+    const stripped = c.preview.replace(
+      new RegExp(`\\s*\\b${base}--[\\w-]+`, 'g'),
+      '',
+    )
+    return injectClasses(stripped, cls.slice(1).join(' '))
+  }
+  return `<span class="${cls.join(' ')}">${esc(c.name)}</span>`
+}
+
+/** Add class names to the root element of a static HTML fragment. */
+function injectClasses(html: string, extra: string): string {
+  if (!extra.trim()) return html
+  const m = html.match(/^\s*<([a-z][\w-]*)([^>]*?)(\/?)>/i)
+  if (!m) return html
+  const [full, tag, attrs, selfClose] = m
+  const existing = /\sclass="([^"]*)"/.exec(attrs)
+  // Merge into the existing class attribute. Appending a second one is invalid
+  // HTML and the browser keeps only the first, so the variant would never apply.
+  const nextAttrs = existing
+    ? attrs.replace(/\sclass="([^"]*)"/, (_s, c: string) => ` class="${c} ${extra}"`)
+    : `${attrs} class="${extra}"`
+  return html.replace(full, `<${tag}${nextAttrs}${selfClose}>`)
 }
 
 export interface VisualBookInput {
@@ -150,7 +181,7 @@ export function buildVisualBook(input: VisualBookInput): string {
         <div class="axis-head"><span class="mono">${esc(axis)}</span><span class="axis-values">${values.map((v) => esc(v)).join(' · ')}</span></div>
         <div class="split">
           <div class="side side-before">
-            <div class="side-label">Before<span>source · ${esc(fact.rawValues.length.toString())} raw values</span></div>
+            <div class="side-label">Before<span>${fact.markup ? 'source markup' : 'no markup recovered'} · ${esc(fact.rawValues.length.toString())} raw values</span></div>
             <div class="specimens">${values.map((v) => `<div class="spec">${beforeMarkup(fact, axis, v)}<code>${esc(v)}</code></div>`).join('')}</div>
           </div>
           <div class="side side-after">
@@ -289,6 +320,9 @@ h3{font-size:14px;letter-spacing:.01em;margin:24px 0 8px;font-weight:600}
 .specimens{display:flex;flex-wrap:wrap;gap:14px;padding:22px 18px;align-items:flex-end}
 .spec{display:flex;flex-direction:column;gap:7px;align-items:flex-start}
 .spec code{font-family:"JetBrains Mono",monospace;font-size:10px;color:var(--ink-faint)}
+.pl-nomarkup{font-size:11.5px;color:var(--ink-faint);font-style:italic}
+.pl-slot{display:inline-flex;align-items:center;padding:1px 6px;border-radius:5px;
+  border:1px dashed var(--edge);color:var(--ink-faint);font-size:11px}
 
 .code{font-family:"JetBrains Mono",monospace;font-size:11.5px;line-height:1.75;
   margin:0;padding:16px 18px;white-space:pre-wrap;color:var(--ink-soft)}

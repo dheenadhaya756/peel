@@ -73,17 +73,44 @@ export function deriveTokens(facts: SystemFacts): GeneratedToken[] {
     return name
   }
 
-  // Carry across any custom properties the system already declared.
+  /**
+   * Carry the system's OWN custom properties through, under their own names.
+   *
+   * A mature design system already has a token layer — SLDS ships ~980 colour tokens
+   * and a full spacing scale. Reducing that to the handful of hex literals that
+   * happen to appear inline throws away almost everything the team built, and leaves
+   * anything generated against it with no palette to work from.
+   */
+  const CONCRETE = /^(#[0-9a-fA-F]{3,8}|rgba?\(|hsla?\(|[\d.]+(px|rem|em|%)|[\d.]+$)/i
   for (const t of facts.tokens) {
-    if (!/^#[0-9a-fA-F]{3,8}$/.test(t.value.trim())) continue
-    const name = hexName(t.value.trim())
-    if (!primitives.has(name)) {
-      primitives.set(name, {
-        name, tier: 'primitive', type: 'color', value: t.value.trim().toLowerCase(),
-        description: `${describeHex(t.value.trim())} — declared as --${t.name}`,
-        origin: `${t.file}:${t.line}`,
-      })
+    const value = t.value.trim()
+    const name = t.name
+
+    if (/^#[0-9a-fA-F]{3,8}$/.test(value)) {
+      // Keep a palette entry under the hex, so derived semantics can alias it…
+      const hex = hexName(value)
+      if (!primitives.has(hex)) {
+        primitives.set(hex, {
+          name: hex, tier: 'primitive', type: 'color', value: value.toLowerCase(),
+          description: `${describeHex(value)} — declared as --${name}`,
+          origin: `${t.file}:${t.line}`,
+        })
+      }
     }
+
+    // …and keep the team's own name too, which is the one their docs refer to.
+    if (!CONCRETE.test(value) || primitives.has(name)) continue
+    const type: GeneratedToken['type'] =
+      /^(#|rgb|hsl)/i.test(value) ? 'color'
+        : /radius/i.test(name) ? 'radius'
+          : /font|text|size/i.test(name) ? 'font'
+            : /shadow/i.test(name) ? 'shadow'
+              : 'space'
+    primitives.set(name, {
+      name, tier: 'primitive', type, value,
+      description: `declared by ${facts.packageName} at ${t.file}:${t.line}`,
+      origin: `${t.file}:${t.line}`,
+    })
   }
 
   const push = (name: string, t: Omit<GeneratedToken, 'name' | 'tier'>) => {

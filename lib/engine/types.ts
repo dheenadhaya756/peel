@@ -67,6 +67,13 @@ export interface ComponentFact {
   /** The component's own JSDoc block, when it has one. This is the purpose,
    *  already written by the team — it must never be replaced by a guess. */
   docComment?: string
+  /** Static HTML recovered from the JSX the component returns. This is what makes
+   *  a preview show the component rather than its name in a box. */
+  markup?: string
+  /** Class names the recovered markup references. */
+  markupClasses?: string[]
+  /** Slots in the markup that could not be resolved statically. */
+  markupUnresolved?: string[]
   loc: number
 }
 

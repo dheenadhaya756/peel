@@ -13,6 +13,7 @@ import type { ComponentFact } from '../engine/types'
 import type { GeneratedToken } from './tokens'
 import { archetypeFor, todo } from './knowledge'
 import type { Judgment } from './enrich'
+import type { RenderedComponent } from './style'
 
 export interface GeneratedComponent {
   name: string
@@ -22,6 +23,10 @@ export interface GeneratedComponent {
   /** Semantic tokens this component consumes. */
   consumes: string[]
   todos: string[]
+  /** Static HTML for one instance, so a preview shows the component itself. */
+  preview?: string
+  /** Set when a generated visual was rejected and the plain fallback shipped. */
+  visualRejected?: string
 }
 
 export interface Guidance {
@@ -70,6 +75,7 @@ export function generateComponent(
   fact: ComponentFact,
   tokens: GeneratedToken[],
   judgment?: Judgment,
+  rendered?: RenderedComponent,
 ): GeneratedComponent {
   const match = archetypeFor(fact.name)
   const arch = match?.archetype
@@ -273,9 +279,18 @@ ${fact.name}.displayName = '${fact.name}'
     }),
   )
 
+  // When the source carried recoverable styling, that is what ships — it is measured.
+  // Otherwise the rendered visual layer stands in, so the component is something you
+  // can actually see rather than an unstyled element.
+  const hasMeasuredStyling = variantRules.some((r) => r.includes('var(--'))
+  const visualCss = !hasMeasuredStyling && rendered?.css ? rendered.css : null
+
   const css = `/* ${fact.name} — generated. Consumes the semantic tier only. */
+${visualCss ? `/* Visual layer generated from the contract and the token set${rendered?.rejected ? '' : ', validated to contain no raw values'}. */` : ''}
 @layer components {
-  .${base} {
+${visualCss
+  ? visualCss.split('\n').map((l) => `  ${l}`).join('\n')
+  : `  .${base} {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -287,7 +302,7 @@ ${fact.name}.displayName = '${fact.name}'
     transition: background-color 120ms ease, color 120ms ease;
   }
 
-${variantRules.map((r) => r.split('\n').map((l) => `  ${l}`).join('\n')).join('\n\n')}
+${variantRules.map((r) => r.split('\n').map((l) => `  ${l}`).join('\n')).join('\n\n')}`}
 
   .${base}:focus-visible {
     outline: 2px solid var(--bg-action-${axes[0] ? fact.variants[axes[0][0]][0] : 'primary'}, currentColor);
@@ -356,6 +371,8 @@ Generated from \`guidance.yaml\`. Do not edit by hand.
 `
 
   return {
+    preview: rendered?.html,
+    visualRejected: rendered?.rejected,
     name: fact.name,
     kebab: kebab(fact.name),
     files: {

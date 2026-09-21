@@ -14,6 +14,7 @@ import { deriveTokens, tokensToCss, type GeneratedToken } from './tokens'
 import { generateComponent, type GeneratedComponent } from './component'
 import { archetypeFor } from './knowledge'
 import { enrichAll } from './enrich'
+import { renderComponent, type RenderedComponent } from './style'
 import {
   buildCi, buildConformanceChecker, buildDocsCheck, buildEslintConfig, buildStories,
 } from './enforcement'
@@ -35,6 +36,8 @@ export interface ConversionResult {
 
 /** Called per phase so the caller can stream what is happening. */
 export type OnPhase = (id: string, label: string, detail?: string) => void
+
+const kebabOf = (s: string) => s.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase()
 
 export async function convert(
   facts: SystemFacts,
@@ -66,8 +69,24 @@ export async function convert(
       : `all ${picked.length} answered from source documentation or recorded archetypes`,
   )
 
+  // The visual layer: what the component should LOOK like, which no compiler can
+  // derive. Validated against the token set before it is accepted.
+  const rendered = new Map<string, RenderedComponent>()
+  for (const f of picked) {
+    const r = await renderComponent(f, `pl-${kebabOf(f.name)}`, judgments.get(f.name)?.purpose ?? f.name, tokens)
+    rendered.set(f.name, r)
+  }
+  const rejects = [...rendered.values()].filter((r) => r.rejected).length
+  onPhase(
+    'render',
+    'Render the visual layer',
+    rejects
+      ? `${picked.length - rejects} rendered from tokens · ${rejects} rejected for breaking the token rule, plain fallback used`
+      : `${picked.length} rendered from the semantic tokens, validated to contain no raw values`,
+  )
+
   const components = picked.map((f) => {
-    const g = generateComponent(f, tokens, judgments.get(f.name))
+    const g = generateComponent(f, tokens, judgments.get(f.name), rendered.get(f.name))
     const axes = Object.keys(g.guidance.variants)
     onPhase(
       `component:${g.kebab}`,

@@ -8,6 +8,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import type { ComponentFact, Evidence, PropFact, SystemFacts, TokenFact } from './types'
 import { NON_LIBRARY, locate } from './locate'
+import { extractMarkup } from './markup'
 
 const SKIP_DIRS = new Set(['node_modules', '.git', '.next', 'dist-types', 'coverage', '.turbo'])
 
@@ -531,6 +532,10 @@ function extractComponents(root: string, files: string[], rootExports: Set<strin
     // The component's own JSDoc is the purpose, already written by the team.
     const docComment = componentDoc(src, name)
 
+    // The JSX the component returns, as static HTML. Without this a preview can
+    // only show the component's name, which is not a preview of anything.
+    const recovered = extractMarkup(src, name)
+
     // Defaults declared in the signature are real; prefer them over an assumption.
     const paramDefaults = readParamDefaults(src, name)
     const defaultVariants = { ...paramDefaults, ...cva.defaultVariants }
@@ -558,6 +563,9 @@ function extractComponents(root: string, files: string[], rootExports: Set<strin
       states,
       hasDoc,
       docComment,
+      markup: recovered?.html,
+      markupClasses: recovered?.classes,
+      markupUnresolved: recovered?.unresolved,
       loc: text.split('\n').length,
     })
   }
