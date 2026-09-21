@@ -81,6 +81,44 @@ function slotText(name: string): string {
   return ''
 }
 
+/**
+ * Local variables that hold an element type.
+ *
+ * `const Comp = asChild ? Slot : 'nav'` is the Radix polymorphic pattern and it is
+ * everywhere. Without resolving it, `<Comp>` looks like a nested component, the
+ * whole root element disappears into a marker, and the preview shows a chip instead
+ * of the nav the component actually renders.
+ *
+ * The string-literal branch is the real default — the other branch only applies when
+ * a consumer passes `asChild`.
+ */
+function resolveElementAliases(src: ts.SourceFile): Record<string, string> {
+  const out: Record<string, string> = {}
+  const visit = (node: ts.Node): void => {
+    if (ts.isVariableStatement(node)) {
+      for (const d of node.declarationList.declarations) {
+        const name = d.name.getText(src)
+        if (!/^[A-Z]/.test(name) || !d.initializer) continue
+        const init = d.initializer
+
+        // `cond ? Slot : 'nav'` — take whichever branch is a string literal.
+        if (ts.isConditionalExpression(init)) {
+          for (const branch of [init.whenFalse, init.whenTrue]) {
+            if (ts.isStringLiteral(branch)) { out[name] = branch.text; break }
+          }
+        } else if (ts.isStringLiteral(init)) {
+          out[name] = init.text
+        }
+      }
+    }
+    ts.forEachChild(node, (n) => {
+      visit(n)
+    })
+  }
+  visit(src)
+  return out
+}
+
 export function extractMarkup(
   src: ts.SourceFile,
   componentName: string,
@@ -88,6 +126,7 @@ export function extractMarkup(
 ): MarkupResult | null {
   const classes: string[] = []
   const unresolved: string[] = []
+  const elementAliases = resolveElementAliases(src)
 
   /** The JSX returned by the component's own declaration. */
   const findReturnJsx = (): ts.Node | null => {
@@ -206,7 +245,9 @@ export function extractMarkup(
 
     if (ts.isJsxSelfClosingElement(node) || ts.isJsxElement(node)) {
       const open = ts.isJsxElement(node) ? node.openingElement : node
-      const tagName = open.tagName.getText(src)
+      const raw = open.tagName.getText(src)
+      // A polymorphic alias resolves to the tag it actually renders.
+      const tagName = elementAliases[raw] ?? raw
       const isHost = /^[a-z]/.test(tagName)
       const attrs = attrsOf(open)
 

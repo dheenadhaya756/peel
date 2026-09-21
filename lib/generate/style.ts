@@ -34,9 +34,18 @@ available. You may also be shown the markup the original component rendered.
 
 Produce TWO things:
 1. "html" — static HTML for ONE instance of the component, using semantic elements
-   (button, input, span, div, ul, table as appropriate). The root element must carry
-   class "ROOT". Use the literal text "SLOT" wherever user content would go. Keep it
-   to what the component actually is — do not add surrounding page furniture.
+   (button, input, span, div, nav, ul, li, table as appropriate). The root element
+   must carry class "ROOT".
+
+   Fill it with REALISTIC content so the result looks like the real component:
+   a nav gets three or four labelled links, a table gets a header row and two data
+   rows, an avatar gets initials, a badge gets a short status word. Someone looking
+   at the result should recognise the component immediately.
+
+   Give inner elements BEM classes derived from the root — ROOT__item, ROOT__label —
+   so they can be styled. Do NOT write the component's own name as visible text;
+   that is a label, not a component. Keep it to the component itself: no page
+   furniture around it.
 2. "css"  — CSS rules. Write a rule for ".ROOT" and one for ".ROOT--<value>" for every
    value of every variant axis. Make the variants VISIBLY different from each other.
 
@@ -149,6 +158,26 @@ function fallback(fact: ComponentFact, base: string, tokens: GeneratedToken[]): 
 }
 
 /**
+ * What a leftover SLOT should contain.
+ *
+ * Never the component's name. "SidebarNavigation" written inside a box is a caption,
+ * not a rendering — and it is exactly what made every structural component look
+ * identical to every other one.
+ */
+function slotTextFor(fact: ComponentFact): string {
+  const n = fact.name
+  if (/nav|menu|sidebar|tab|step|breadcrumb/i.test(n)) return 'Dashboard'
+  if (/badge|tag|chip|pill|status/i.test(n)) return 'Active'
+  if (/button|action|cta/i.test(n)) return 'Continue'
+  if (/input|field|search/i.test(n)) return 'Search…'
+  if (/avatar/i.test(n)) return 'AB'
+  if (/card|panel|tile|surface/i.test(n)) return 'Card content'
+  if (/alert|toast|notice|banner/i.test(n)) return 'Your changes were saved.'
+  if (/table|list|grid|row/i.test(n)) return 'Row item'
+  return 'Content'
+}
+
+/**
  * Substitute the placeholder class and slot for the real ones.
  *
  * A plain global replace, NOT a word-boundary one: the model writes BEM-style
@@ -158,6 +187,8 @@ function fallback(fact: ComponentFact, base: string, tokens: GeneratedToken[]): 
  */
 function materialise(r: RenderedComponent, base: string, label: string): RenderedComponent {
   return {
+    // SLOT is a fallback for models that still emit it. It becomes neutral content —
+    // never the component's name, which is a caption, not a rendering.
     html: r.html.replace(/ROOT/g, base).replace(/SLOT/g, label),
     css: r.css.replace(/ROOT/g, base),
     rejected: r.rejected,
@@ -201,7 +232,7 @@ export async function renderComponent(
   // Validation allows any token the conversion actually emits — the system's own
   // names included. What it forbids is a value that is not a token at all.
   const allowed = new Set(tokens.map((t) => t.name))
-  const label = fact.name
+  const label = slotTextFor(fact)
 
   if (!apiKey() || !semantic.length) {
     return materialise(fallback(fact, base, tokens), base, label)

@@ -698,8 +698,19 @@ export function extract(inputRoot: string): SystemFacts {
   }
 
   const components = extractComponents(root, files, rootExports)
-  const cssFiles = files.filter((f) => /\.(css|scss)$/.test(f) && !/node_modules/.test(f))
-  const tokens = extractTokens(root, cssFiles)
+  /**
+   * Tokens are system-wide; components are package-scoped.
+   *
+   * A monorepo design system routinely splits them — `packages/css` holds the token
+   * layer and `packages/react` holds the components. Locating the component package
+   * and then reading tokens only from inside it finds nothing, and the system is
+   * reported as having no token layer when it has thousands of them.
+   *
+   * So: components come from the located package, stylesheets from the whole tree.
+   */
+  const treeFiles = located.root === inputRoot ? files : walk(inputRoot)
+  const cssFiles = treeFiles.filter((f) => /\.(css|scss)$/.test(f) && !/node_modules/.test(f))
+  const tokens = extractTokens(inputRoot, cssFiles)
   const cascade = analyseCascade(cssFiles)
 
   const findFile = (name: string) => {
@@ -724,7 +735,8 @@ export function extract(inputRoot: string): SystemFacts {
   const rawValueTotal = components.reduce((n, c) => n + c.rawValues.length, 0)
 
   return {
-    root,
+    root: inputRoot,
+    packageRoot: root,
     locatedReason: located.reason,
     locatedCandidates: located.candidates,
     packageName: (pkg?.name as string) ?? path.basename(root),
@@ -740,7 +752,9 @@ export function extract(inputRoot: string): SystemFacts {
       : undefined,
     components,
     tokens,
-    cssFiles: cssFiles.map(rel),
+    // Relative to the INPUT root, not the located package — stylesheets may live in
+    // a sibling package, which is where a monorepo design system usually keeps them.
+    cssFiles: cssFiles.map((f) => path.relative(inputRoot, f).split(path.sep).join('/')),
     cssLayers: cascade.layers,
     layeredSelectors: cascade.layered,
     unlayeredSelectors: cascade.unlayered,

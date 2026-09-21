@@ -86,7 +86,10 @@ export interface TokenFact {
 }
 
 export interface SystemFacts {
+  /** The tree that was handed over. Stylesheets resolve against this. */
   root: string
+  /** The package the components came from, which may be a subdirectory. */
+  packageRoot: string
   /** How the audited package was chosen out of the tree, so the call can be disputed. */
   locatedReason: string
   locatedCandidates: Array<{ dir: string; components: number; name: string }>
