@@ -97,15 +97,15 @@ matcher. Connecting a model turns it into natural language.
 
 Click **Connect model** in the header. Any OpenAI-compatible gateway works; it
 defaults to a local [OmniRoute](https://github.com/pitbaden/omniroute) at
-, and OpenRouter and OpenAI are one click away.
+`http://localhost:20128/v1`, and OpenRouter and OpenAI are one click away.
 
-**Pick a concrete model, not a routing alias.** OmniRoute's  profiles are
-agentic coding routes that inject their own tools (, ); they
+**Pick a concrete model, not a routing alias.** OmniRoute's `auto/*` profiles are
+agentic coding routes that inject their own tools (`list_dir`, `read_file`); they
 keep emitting calls for tools this app never declared and never resolve to an
-answer. The picker filters them out.  is the default.
+answer. The picker filters them out. `agy/claude-sonnet-4-6` is the default.
 
 The model only chooses **which tool to call**. The ten tools in
- are the entire surface, so it cannot write a file and cannot
+`lib/chat/tools.ts` are the entire surface, so it cannot write a file and cannot
 invent a component — the guarantee holds whichever model is behind the key.
 
 ## Connect it to your editor
