@@ -32,6 +32,13 @@ export function db(): DatabaseSync {
       converted    INTEGER DEFAULT 0,
       selected     TEXT                 -- JSON array of converted component names
     );
+
+    -- Local settings, including the OpenRouter key. This file is gitignored and
+    -- never leaves the machine; the key is only ever sent to OpenRouter itself.
+    CREATE TABLE IF NOT EXISTS settings (
+      key   TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
   `)
   _db = d
   return d
@@ -96,3 +103,25 @@ export function writeTree(root: string, files: Record<string, string>) {
 
 export const newId = () =>
   `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`
+
+/* ------------------------------------------------------------------ settings */
+
+/**
+ * Local settings live in the gitignored SQLite file rather than .env.local, so a
+ * key pasted into the UI takes effect immediately instead of needing a restart.
+ * The value is never returned to the browser — only whether one is set.
+ */
+export function getSetting(key: string): string | null {
+  const row = db().prepare('SELECT value FROM settings WHERE key = ?').get(key) as { value?: string } | undefined
+  return row?.value ?? null
+}
+
+export function setSetting(key: string, value: string) {
+  db()
+    .prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
+    .run(key, value)
+}
+
+export function clearSetting(key: string) {
+  db().prepare('DELETE FROM settings WHERE key = ?').run(key)
+}

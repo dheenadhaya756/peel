@@ -11,11 +11,15 @@
  * which model is behind the key.
  */
 import { TOOLS } from './tools'
+import { getSetting } from '../store'
 
 const ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions'
 
-export const hasKey = () => Boolean(process.env.OPENROUTER_API_KEY)
-export const model = () => process.env.OPENROUTER_MODEL || 'anthropic/claude-sonnet-4.5'
+/** A key pasted into the app wins over one in .env.local, so the UI is authoritative. */
+export const apiKey = () => getSetting('openrouter_api_key') ?? process.env.OPENROUTER_API_KEY ?? null
+export const hasKey = () => Boolean(apiKey())
+export const model = () =>
+  getSetting('openrouter_model') ?? process.env.OPENROUTER_MODEL ?? 'anthropic/claude-sonnet-4.5'
 
 const SYSTEM = `You are the assistant inside Peel, a tool that measures whether a design system is ready for AI agents to build from, and converts it so that it is.
 
@@ -55,8 +59,8 @@ export async function routeWithModel(
   runTool: (name: string, args: Record<string, unknown>) => { text: string; data?: unknown },
   history: Array<{ role: 'user' | 'assistant'; content: string }> = [],
 ): Promise<LlmTurn> {
-  const key = process.env.OPENROUTER_API_KEY
-  if (!key) throw new Error('OPENROUTER_API_KEY is not set')
+  const key = apiKey()
+  if (!key) throw new Error('No OpenRouter key is configured')
 
   const tools = TOOLS.map((t) => ({
     type: 'function' as const,

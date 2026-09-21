@@ -4,6 +4,7 @@ import * as React from 'react'
 import { Empty, Spinner, VerdictChip, cx } from './primitives'
 import { ReportPanel } from './panels/report'
 import { CodePanel, VisualPanel } from './panels/visual'
+import { ConnectButton } from './connect'
 import type { ConvertResult, SystemDetail, SystemSummary } from './types'
 
 type Tab = 'report' | 'visual' | 'code' | 'knowledge'
@@ -190,6 +191,7 @@ function TopBar() {
         </span>
       </div>
       <div className="flex items-center gap-2">
+        <ConnectButton />
         <span className="chip ring-1 ring-paper-edge bg-paper-sunken text-ink-faint font-mono">
           MCP ready
         </span>
