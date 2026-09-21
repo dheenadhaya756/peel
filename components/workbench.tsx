@@ -495,9 +495,8 @@ function Chat({ systemId, systemName }: { systemId: string | null; systemName: s
                 </span>
               ) : (
                 <span className="text-verdict-maybe">
-                  No OpenRouter key — intent matching is pattern-based. Add{' '}
-                  <span className="font-mono">OPENROUTER_API_KEY</span> to{' '}
-                  <span className="font-mono">.env.local</span> and restart.
+                  No model connected — intent matching is pattern-based. Use{' '}
+                  <strong>Connect model</strong> in the header.
                 </span>
               )}
             </p>

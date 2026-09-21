@@ -10,14 +10,19 @@
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { buildContext, TOOL_BY_NAME, toolNames } from '@/lib/chat/tools'
-import { hasKey, model, routeWithModel } from '@/lib/chat/openrouter'
+import { hasKey, model, providerLabel, routeWithModel } from '@/lib/chat/llm'
 
 export const runtime = 'nodejs'
 export const maxDuration = 120
 
 export async function GET() {
   // The UI shows which router is live, so nobody has to guess why replies changed.
-  return NextResponse.json({ llm: hasKey(), model: hasKey() ? model() : null, tools: toolNames() })
+  return NextResponse.json({
+    llm: hasKey(),
+    model: hasKey() ? model() : null,
+    provider: hasKey() ? providerLabel() : null,
+    tools: toolNames(),
+  })
 }
 
 export async function POST(req: NextRequest) {
@@ -105,7 +110,7 @@ function match(q: string, run: (name: string, args: Record<string, unknown>) => 
   if (where) return { ...run('find_component', { query: where[1] }), tool: 'find_component' }
 
   return {
-    text: `I can't map that to anything I'm allowed to do, so I'm not going to guess at it.\n\nWhat I can do:\n\n\`${toolNames()}\`\n\nEverything runs through the engine — I can't write a file directly, which is why I can't invent one.\n\n*(No OpenRouter key set, so intent matching is pattern-based. Add one to .env.local for natural language.)*`,
+    text: `I can't map that to anything I'm allowed to do, so I'm not going to guess at it.\n\nWhat I can do:\n\n\`${toolNames()}\`\n\nEverything runs through the engine — I can't write a file directly, which is why I can't invent one.\n\n*(No model connected, so intent matching is pattern-based. Connect one from the header for natural language.)*`,
     tool: 'unmapped',
   }
 }

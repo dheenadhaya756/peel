@@ -90,6 +90,24 @@ node scripts/peel.mjs <github-url | local-path | file.zip> \
 
 Also installed as the `peel-mcp` skill.
 
+## Connect a model
+
+The chat pane works without one — intent matching falls back to a deterministic
+matcher. Connecting a model turns it into natural language.
+
+Click **Connect model** in the header. Any OpenAI-compatible gateway works; it
+defaults to a local [OmniRoute](https://github.com/pitbaden/omniroute) at
+, and OpenRouter and OpenAI are one click away.
+
+**Pick a concrete model, not a routing alias.** OmniRoute's  profiles are
+agentic coding routes that inject their own tools (, ); they
+keep emitting calls for tools this app never declared and never resolve to an
+answer. The picker filters them out.  is the default.
+
+The model only chooses **which tool to call**. The ten tools in
+ are the entire surface, so it cannot write a file and cannot
+invent a component — the guarantee holds whichever model is behind the key.
+
 ## Connect it to your editor
 
 ```json
